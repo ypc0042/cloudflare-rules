@@ -1,0 +1,45 @@
+{
+  "name": "cloudflare-rules",
+  "version": "1.0.2",
+  "private": true,
+  "packageManager": "pnpm@10.11.1",
+  "type": "module",
+  "description": "Self-hosted rules console for Cloudflare Workers (D1).",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "pnpm build:client && pnpm prepare:cloudflare-deploy",
+    "build:client": "vite build",
+    "prepare:cloudflare-deploy": "node scripts/prepare-cloudflare-deploy.mjs",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:contract": "vitest run tests/contract",
+    "test:api": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "preview": "vite preview",
+    "deploy": "wrangler deploy --keep-vars",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
+  },
+  "dependencies": {
+    "hono": "^4.8.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.11.6",
+    "@cloudflare/workers-types": "^5.20260708.1",
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.6.0",
+    "miniflare": "^4.20260702.0",
+    "opencc-js": "^1.4.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.5",
+    "vitest": "^4.0.18",
+    "wrangler": "^4.24.0"
+  }
+}
