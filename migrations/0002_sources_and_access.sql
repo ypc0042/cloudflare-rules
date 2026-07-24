@@ -1,3 +1,9 @@
+-- 历史迁移：访问策略列 + 数据源表
+-- 注意：SQLite/D1 的 ALTER TABLE ADD COLUMN 不可重复执行。
+-- 若运行时 ensureDatabase 已加过这些列，请用 `pnpm db:migrate:remote`（安全脚本）
+-- 它会先根据 PRAGMA 补记 d1_migrations，再执行 wrangler apply。
+-- 全新空库可直接 apply 本文件。
+
 ALTER TABLE categories ADD COLUMN public_links_enabled INTEGER DEFAULT 0;
 ALTER TABLE categories ADD COLUMN token_links_enabled INTEGER DEFAULT 1;
 ALTER TABLE rules ADD COLUMN source_id TEXT;

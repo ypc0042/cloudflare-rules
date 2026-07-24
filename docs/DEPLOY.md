@@ -71,14 +71,22 @@
 | **正确路径** | Worker → **Settings → Bindings → Add → D1** → Variable name = **`DB`** → 选择数据库 |
 | **注意** | Binding 必须是 `DB`（与 `wrangler.toml` / 代码 `env.DB` 一致）。 |
 
-### 7. 迁移：`duplicate column name: public_links_enabled`
+### 7. 迁移：`duplicate column name: public_links_enabled`（已防护）
 
 | | |
 | --- | --- |
-| **现象** | `0001` ✅ 后，`0002` 失败：`duplicate column name: public_links_enabled`；`migrations list` 仍显示 0002–0010 待应用 |
-| **原因** | 库结构已部分/全部存在（列已加过），但 **`d1_migrations` 只记了 0001**。再次执行 `ALTER TABLE ... ADD COLUMN` 必炸。表名是 **`d1_migrations`**，不是 `_migrations`。 |
-| **正确做法（结构已齐时）** | 核对 `PRAGMA table_info` / 表列表后，将剩余迁移名插入 `d1_migrations`，避免重复执行：见下方「修复命令」。 |
-| **正确做法（全新空库）** | `pnpm db:migrate:remote` 一次跑完 0001–0010 即可。 |
+| **现象** | `0001` ✅ 后，`0002` 失败：`duplicate column name: public_links_enabled`；`migrations list` 仍显示后续迁移待应用 |
+| **原因** | Worker 运行时的 `ensureDatabase` 会幂等建表/加列，但 **不会** 写完整的 `d1_migrations`。之后 `wrangler d1 migrations apply` 仍会再跑 `ALTER TABLE ... ADD COLUMN`，SQLite 不允许重复加同名列。表名是 **`d1_migrations`**，不是 `_migrations`。 |
+| **正确做法（现在默认）** | 使用 **`pnpm db:migrate:remote`** / **`pnpm db:migrate:local`**。它们调用 `scripts/d1-migrate-safe.mjs`：先根据 `PRAGMA`/表清单补记「结构已满足」的迁移，再执行 wrangler apply。 |
+| **裸 wrangler** | `pnpm db:migrate:remote:raw` 仍可用，但**没有**上述防护，可能再次撞 duplicate column。 |
+| **运行时自愈** | `ensureDatabase` 末尾会 `reconcileD1MigrationRecords`：结构已齐时 `INSERT OR IGNORE` 对应迁移名，减少以后再踩坑。 |
+
+#### 推荐命令
+
+```bash
+pnpm db:migrate:remote   # 安全脚本（推荐）
+pnpm db:migrate:local
+```
 
 #### 查看迁移状态
 
@@ -87,17 +95,13 @@ npx wrangler d1 execute DB --remote --command="SELECT * FROM d1_migrations ORDER
 npx wrangler d1 migrations list DB --remote
 ```
 
-#### 结构已完整、仅记录缺失时（示例）
-
-确认表/列已齐全后：
+#### 若仍失败（手动补记，仅当结构已完整）
 
 ```bash
-npx wrangler d1 execute DB --remote --command="INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0002_sources_and_access.sql'), ('0003_geosite_sources.sql'), ('0004_geoip_sources.sql'), ('0005_api_keys.sql'), ('0006_runtime_baseline.sql'), ('0007_source_user_agent.sql'), ('0008_source_rule_optimization.sql'), ('0009_rule_optimization_levels.sql'), ('0010_github_mirror_setting.sql');"
-npx wrangler d1 migrations list DB --remote
-# 期望：No migrations to apply!
+npx wrangler d1 execute DB --remote --command="INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0002_sources_and_access.sql'), ('0003_geosite_sources.sql'), ('0004_geoip_sources.sql'), ('0005_api_keys.sql'), ('0006_runtime_baseline.sql'), ('0007_source_user_agent.sql'), ('0008_source_rule_optimization.sql'), ('0009_rule_optimization_levels.sql'), ('0010_github_mirror_setting.sql'), ('0011_subscription_bundles.sql');"
 ```
 
-**空库请勿**只插记录不执行 SQL，否则缺表。
+**空库请勿**只插记录不执行 SQL，否则缺表。新增迁移文件时：若含 `ALTER TABLE ... ADD COLUMN`，请同步更新 `scripts/d1-migrate-safe.mjs` 与 `src/lib/db.ts` 的 `reconcileD1MigrationRecords` 判定。
 
 ### 8. better-sqlite3 / Docker 安装失败（历史）
 

@@ -327,29 +327,43 @@ npx wrangler login
 
 ### 6.3 执行远程迁移
 
+**请用项目脚本（带防护），不要直接裸跑 wrangler apply：**
+
 ```bash
 pnpm db:migrate:remote
 ```
 
-等价命令：
+它会执行 `scripts/d1-migrate-safe.mjs --remote`：
 
-```bash
-npx wrangler d1 migrations apply DB --remote
-```
+1. 检查当前表/列是否已存在（Worker 的 `ensureDatabase` 可能已建好）  
+2. 把「结构已满足」但 `d1_migrations` 未记录的迁移 **补记**  
+3. 再调用 `wrangler d1 migrations apply DB --remote`
 
-全新空库时，应看到 `0001`～`0010` 依次应用成功。
-
-最后再查一次应显示：
+成功时应看到：
 
 ```text
-✅ No migrations to apply!
+✅ D1 migrations are up to date.
+# 或 wrangler 的 No migrations to apply!
+```
+
+本地：
+
+```bash
+pnpm db:migrate:local
+```
+
+若你明确要官方原始命令（无防护）：
+
+```bash
+pnpm db:migrate:remote:raw
+# 即 wrangler d1 migrations apply DB --remote
 ```
 
 ### 6.4 迁移常见问题
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
-| `duplicate column name: public_links_enabled` | 表结构已有，但 `d1_migrations` 记录不完整 | 见 [docs/DEPLOY.md](./docs/DEPLOY.md) 修复步骤 |
+| `duplicate column name: public_links_enabled` | 结构已有、迁移记录不全；裸 `wrangler apply` 会踩坑 | **改用** `pnpm db:migrate:remote`；详见 [docs/DEPLOY.md](./docs/DEPLOY.md) |
 | `no such table: _migrations` | 表名搞错 | 正确表名是 **`d1_migrations`** |
 | 找不到数据库 | `database_id` / 绑定不一致 | Dashboard 复制 Database ID 写入 `wrangler.toml` 后再试 |
 

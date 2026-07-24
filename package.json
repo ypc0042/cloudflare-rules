@@ -19,8 +19,10 @@
     "test:e2e": "playwright test",
     "preview": "vite preview",
     "deploy": "wrangler deploy --keep-vars",
-    "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "db:migrate:remote": "wrangler d1 migrations apply DB --remote"
+    "db:migrate:local": "node scripts/d1-migrate-safe.mjs --local",
+    "db:migrate:remote": "node scripts/d1-migrate-safe.mjs --remote",
+    "db:migrate:local:raw": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote:raw": "wrangler d1 migrations apply DB --remote"
   },
   "dependencies": {
     "hono": "^4.8.5"

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ClientLink, DomainRule, DomainRuleType, GeoSourceSuggestion, ImportPreview, RulesData } from '../../types/domain-rules';
+import type { BundleFormat, ClientLink, DomainRule, DomainRuleType, GeoSourceSuggestion, ImportPreview, RulesData, SubscriptionBundle } from '../../types/domain-rules';
 import { UPSTREAM_RULE_PREVIEW_LIMIT } from '../../types/domain-rules';
 
 type LinksByCategory = Record<string, ClientLink[]>;
@@ -27,6 +27,7 @@ const localDemoData: RulesData = {
 export function useDomainAdmin() {
   const [data, setData] = useState<RulesData | null>(null);
   const [links, setLinks] = useState<LinksByCategory>({});
+  const [bundles, setBundles] = useState<SubscriptionBundle[]>([]);
   const [meta, setMeta] = useState({
     authenticated: false,
     passwordConfigured: false,
@@ -42,7 +43,12 @@ export function useDomainAdmin() {
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [response, meResponse, apiKeysResponse] = await Promise.all([fetch('/api/categories'), fetch('/api/auth/me'), fetch('/api/api-keys')]);
+      const [response, meResponse, apiKeysResponse, bundlesResponse] = await Promise.all([
+        fetch('/api/categories'),
+        fetch('/api/auth/me'),
+        fetch('/api/api-keys'),
+        fetch('/api/bundles'),
+      ]);
       if (response.status === 401) {
         window.location.href = '/admin/login';
         return;
@@ -50,6 +56,7 @@ export function useDomainAdmin() {
       if (!response.ok && import.meta.env.DEV) {
         setData(localDemoData);
         setLinks({});
+        setBundles([]);
         setError('');
         return;
       }
@@ -62,6 +69,8 @@ export function useDomainAdmin() {
         setMeta(me);
       }
       if (apiKeysResponse.ok) setApiKeys(((await apiKeysResponse.json()) as { keys?: ApiKeySummary[] }).keys ?? []);
+      if (bundlesResponse.ok) setBundles(((await bundlesResponse.json()) as { bundles?: SubscriptionBundle[] }).bundles ?? []);
+      else setBundles([]);
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '加载失败');
@@ -107,6 +116,7 @@ export function useDomainAdmin() {
   return {
     data,
     links,
+    bundles,
     loading,
     error,
     clearError: () => setError(''),
@@ -164,5 +174,10 @@ export function useDomainAdmin() {
     },
     deleteApiKey: (keyId: string) => mutate(`/api/api-keys/${keyId}`, { method: 'DELETE' }),
     updateApiKeyNote: (keyId: string, note: string) => mutate(`/api/api-keys/${keyId}`, { method: 'PATCH', body: JSON.stringify({ note }) }),
+    createBundle: (input: { name?: string; categoryIds: string[]; format?: BundleFormat; tokenLinksEnabled?: boolean; publicLinksEnabled?: boolean; note?: string }) =>
+      mutate('/api/bundles', { method: 'POST', body: JSON.stringify(input) }),
+    updateBundle: (id: string, input: { name?: string; categoryIds?: string[]; format?: BundleFormat; tokenLinksEnabled?: boolean; publicLinksEnabled?: boolean; note?: string }) =>
+      mutate(`/api/bundles/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    deleteBundle: (id: string) => mutate(`/api/bundles/${id}`, { method: 'DELETE' }),
   };
 }

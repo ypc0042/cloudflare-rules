@@ -1,4 +1,4 @@
-import type { BackupRuleSource, DomainRule, RuleCategory, RuleOptimizationMode, RuleSettings, RuleSource, RulesBackupData, RulesData } from '../types/domain-rules';
+import type { BackupRuleSource, BundleFormat, DomainRule, RuleCategory, RuleOptimizationMode, RuleSettings, RuleSource, RulesBackupData, RulesData, SubscriptionBundle } from '../types/domain-rules';
 import { UPSTREAM_RULE_PREVIEW_LIMIT } from '../types/domain-rules';
 import type { Env } from '../types';
 import { normalizeGithubMirrorUrl, sourceNameFromSubscriptionUrl } from './github-mirror';
@@ -112,6 +112,13 @@ export function ensureDatabase(env: Env) {
     )`,
     `INSERT OR IGNORE INTO settings (key, value) VALUES
       ('baseUrl', ''), ('policyName', ''), ('githubMirrorUrl', ''), ('publicLinksEnabled', 'true'), ('tokenLinksEnabled', 'true'), ('customIconPackUrls', '[]'), ('customIconPackNames', '{}')`,
+    `CREATE TABLE IF NOT EXISTS subscription_bundles (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE,
+      format TEXT NOT NULL DEFAULT 'yaml', category_ids TEXT NOT NULL DEFAULT '[]',
+      public_links_enabled INTEGER DEFAULT 0, token_links_enabled INTEGER DEFAULT 1,
+      note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_subscription_bundles_name ON subscription_bundles(name)',
   ];
 
   let databaseReady = readyDatabases.get(env.DB as object);
@@ -153,10 +160,92 @@ export function ensureDatabase(env: Env) {
       env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_rules_source ON rules(source_id)'),
       env.DB.prepare('UPDATE categories SET public_links_enabled = 0 WHERE token_links_enabled = 1 AND public_links_enabled = 1'),
     ]);
+    // 防止「ensureDatabase 已建好结构，但 d1_migrations 未记录」导致 wrangler 重复 ALTER 失败。
+    // 表结构由 wrangler 官方字段对齐；仅在表已存在或成功创建后写入已满足的迁移名。
+    await reconcileD1MigrationRecords(env);
     })();
     readyDatabases.set(env.DB as object, databaseReady);
   }
   return databaseReady;
+}
+
+/**
+ * 当运行时 schema 已由 ensureDatabase 拉齐时，把对应迁移文件名写入 d1_migrations，
+ * 避免之后 `wrangler d1 migrations apply` 再执行会炸的 ADD COLUMN。
+ */
+async function reconcileD1MigrationRecords(env: Env) {
+  try {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS d1_migrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+      )`,
+    ).run();
+  } catch {
+    // 若官方表结构不同导致创建失败，尝试直接插入（表可能已存在）
+  }
+
+  const known: string[] = [
+    '0001_init.sql',
+    '0002_sources_and_access.sql',
+    '0003_geosite_sources.sql',
+    '0004_geoip_sources.sql',
+    '0005_api_keys.sql',
+    '0006_runtime_baseline.sql',
+    '0007_source_user_agent.sql',
+    '0008_source_rule_optimization.sql',
+    '0009_rule_optimization_levels.sql',
+    '0010_github_mirror_setting.sql',
+    '0011_subscription_bundles.sql',
+  ];
+
+  try {
+    const [categoryColumns, ruleColumns, sourceColumns, tables] = await Promise.all([
+      env.DB.prepare('PRAGMA table_info(categories)').all<{ name: string }>(),
+      env.DB.prepare('PRAGMA table_info(rules)').all<{ name: string }>(),
+      env.DB.prepare('PRAGMA table_info(category_sources)').all<{ name: string }>(),
+      env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table'").all<{ name: string }>(),
+    ]);
+    const categoryNames = new Set((categoryColumns.results ?? []).map((column) => column.name));
+    const ruleNames = new Set((ruleColumns.results ?? []).map((column) => column.name));
+    const sourceNames = new Set((sourceColumns.results ?? []).map((column) => column.name));
+    const tableNames = new Set((tables.results ?? []).map((row) => row.name));
+
+    const satisfied = (name: string) => {
+      switch (name) {
+        case '0001_init.sql':
+          return tableNames.has('categories') && tableNames.has('rules');
+        case '0002_sources_and_access.sql':
+          return categoryNames.has('public_links_enabled') && categoryNames.has('token_links_enabled') && ruleNames.has('source_id') && tableNames.has('category_sources');
+        case '0003_geosite_sources.sql':
+          return sourceNames.has('source_type') && sourceNames.has('geosite_name');
+        case '0004_geoip_sources.sql':
+          return sourceNames.has('geoip_name');
+        case '0005_api_keys.sql':
+          return tableNames.has('api_keys');
+        case '0006_runtime_baseline.sql':
+        case '0009_rule_optimization_levels.sql':
+        case '0010_github_mirror_setting.sql':
+          return tableNames.has('settings');
+        case '0007_source_user_agent.sql':
+          return sourceNames.has('user_agent');
+        case '0008_source_rule_optimization.sql':
+          return sourceNames.has('rule_optimization') && sourceNames.has('last_original_count');
+        case '0011_subscription_bundles.sql':
+          return tableNames.has('subscription_bundles');
+        default:
+          return false;
+      }
+    };
+
+    for (const name of known) {
+      if (!satisfied(name)) continue;
+      await env.DB.prepare('INSERT OR IGNORE INTO d1_migrations (name) VALUES (?)').bind(name).run();
+    }
+  } catch {
+    // 迁移表不可用时忽略；用户仍可用 pnpm db:migrate:remote（安全脚本）
+  }
 }
 
 export function now() {
@@ -698,4 +787,215 @@ export async function importRulesData(env: Env, data: RulesData | RulesBackupDat
 
 async function touchCategory(env: Env, categoryId: string) {
   await env.DB.prepare('UPDATE categories SET updated_at = ? WHERE id = ?').bind(now(), categoryId).run();
+}
+
+type BundleRow = {
+  id: string;
+  name: string;
+  slug: string;
+  format: string;
+  category_ids: string;
+  public_links_enabled: number | null;
+  token_links_enabled: number | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const BUNDLE_FORMATS: BundleFormat[] = ['yaml', 'list', 'txt', 'json'];
+
+function parseCategoryIds(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed.map((item) => String(item ?? '').trim()).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeBundleFormat(value?: string | null): BundleFormat {
+  const format = (value ?? 'yaml').toLowerCase() as BundleFormat;
+  return BUNDLE_FORMATS.includes(format) ? format : 'yaml';
+}
+
+/** 名称去重：默认规则 → 默认规则1 … 默认规则9 → 默认规则10 … */
+export async function allocateUniqueBundleName(env: Env, preferred?: string) {
+  const base = preferred?.trim() || '默认规则';
+  const rows = await env.DB.prepare('SELECT name FROM subscription_bundles').all<{ name: string }>();
+  const existing = new Set((rows.results ?? []).map((row) => row.name));
+  if (!existing.has(base)) return base;
+  let n = 1;
+  while (existing.has(`${base}${n}`)) n += 1;
+  return `${base}${n}`;
+}
+
+async function allocateUniqueBundleSlug(env: Env, preferred: string, excludeId?: string) {
+  const root = slugify(preferred) || 'bundle';
+  let candidate = root;
+  let n = 1;
+  for (;;) {
+    const row = await env.DB.prepare('SELECT id FROM subscription_bundles WHERE slug = ?').bind(candidate).first<{ id: string }>();
+    if (!row || row.id === excludeId) return candidate;
+    n += 1;
+    candidate = `${root}-${n}`;
+  }
+}
+
+async function enrichBundle(env: Env, row: BundleRow): Promise<SubscriptionBundle> {
+  const categoryIds = parseCategoryIds(row.category_ids);
+  let categoryNames: string[] = [];
+  let lastSyncedAt: string | undefined;
+  if (categoryIds.length) {
+    const placeholders = categoryIds.map(() => '?').join(',');
+    const nameRows = await env.DB.prepare(`SELECT id, name FROM categories WHERE id IN (${placeholders})`).bind(...categoryIds).all<{ id: string; name: string }>();
+    const nameMap = new Map((nameRows.results ?? []).map((item) => [item.id, item.name]));
+    categoryNames = categoryIds.map((id) => nameMap.get(id) ?? id);
+    const syncRow = await env.DB.prepare(
+      `SELECT MAX(last_synced_at) AS last_synced_at FROM category_sources WHERE category_id IN (${placeholders}) AND last_status = 'success'`,
+    ).bind(...categoryIds).first<{ last_synced_at: string | null }>();
+    lastSyncedAt = syncRow?.last_synced_at ?? undefined;
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    format: normalizeBundleFormat(row.format),
+    categoryIds,
+    categoryNames,
+    publicLinksEnabled: row.public_links_enabled === 1,
+    tokenLinksEnabled: row.token_links_enabled !== 0,
+    note: row.note ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastSyncedAt,
+  };
+}
+
+export async function listSubscriptionBundles(env: Env): Promise<SubscriptionBundle[]> {
+  const rows = await env.DB.prepare('SELECT * FROM subscription_bundles ORDER BY updated_at DESC').all<BundleRow>();
+  return Promise.all((rows.results ?? []).map((row) => enrichBundle(env, row)));
+}
+
+export async function getSubscriptionBundleBySlug(env: Env, slug: string): Promise<SubscriptionBundle | null> {
+  const row = await env.DB.prepare('SELECT * FROM subscription_bundles WHERE slug = ?').bind(slug).first<BundleRow>();
+  return row ? enrichBundle(env, row) : null;
+}
+
+export async function getSubscriptionBundle(env: Env, bundleId: string): Promise<SubscriptionBundle | null> {
+  const row = await env.DB.prepare('SELECT * FROM subscription_bundles WHERE id = ?').bind(bundleId).first<BundleRow>();
+  return row ? enrichBundle(env, row) : null;
+}
+
+export type BundleInput = {
+  name?: string;
+  categoryIds?: string[];
+  format?: BundleFormat | string;
+  tokenLinksEnabled?: boolean;
+  publicLinksEnabled?: boolean;
+  note?: string;
+};
+
+export async function createSubscriptionBundle(env: Env, input: BundleInput) {
+  const categoryIds = [...new Set((input.categoryIds ?? []).map((item) => item.trim()).filter(Boolean))];
+  if (!categoryIds.length) throw new Error('请至少选择一个规则分类。');
+  for (const categoryId of categoryIds) {
+    const exists = await env.DB.prepare('SELECT id FROM categories WHERE id = ?').bind(categoryId).first();
+    if (!exists) throw new Error('所选分类不存在或已被删除。');
+  }
+  const name = await allocateUniqueBundleName(env, input.name);
+  const slug = await allocateUniqueBundleSlug(env, name);
+  const format = normalizeBundleFormat(input.format);
+  const tokenAccess = input.tokenLinksEnabled !== false;
+  const publicAccess = !tokenAccess && input.publicLinksEnabled === true;
+  const timestamp = now();
+  const bundleId = id('bun');
+  await env.DB.prepare(
+    `INSERT INTO subscription_bundles (id, name, slug, format, category_ids, public_links_enabled, token_links_enabled, note, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    bundleId,
+    name,
+    slug,
+    format,
+    JSON.stringify(categoryIds),
+    publicAccess ? 1 : 0,
+    tokenAccess ? 1 : 0,
+    input.note?.trim() || '',
+    timestamp,
+    timestamp,
+  ).run();
+  return getSubscriptionBundle(env, bundleId);
+}
+
+export async function updateSubscriptionBundle(env: Env, bundleId: string, input: BundleInput) {
+  const existing = await env.DB.prepare('SELECT * FROM subscription_bundles WHERE id = ?').bind(bundleId).first<BundleRow>();
+  if (!existing) throw new Error('订阅不存在。');
+  let name = existing.name;
+  if (input.name !== undefined) {
+    const preferred = input.name.trim() || '默认规则';
+    if (preferred !== existing.name) name = await allocateUniqueBundleName(env, preferred);
+  }
+  let categoryIds = parseCategoryIds(existing.category_ids);
+  if (input.categoryIds) {
+    categoryIds = [...new Set(input.categoryIds.map((item) => item.trim()).filter(Boolean))];
+    if (!categoryIds.length) throw new Error('请至少选择一个规则分类。');
+    for (const categoryId of categoryIds) {
+      const exists = await env.DB.prepare('SELECT id FROM categories WHERE id = ?').bind(categoryId).first();
+      if (!exists) throw new Error('所选分类不存在或已被删除。');
+    }
+  }
+  const format = input.format !== undefined ? normalizeBundleFormat(input.format) : normalizeBundleFormat(existing.format);
+  let tokenAccess = existing.token_links_enabled !== 0;
+  let publicAccess = existing.public_links_enabled === 1;
+  if (input.tokenLinksEnabled !== undefined || input.publicLinksEnabled !== undefined) {
+    tokenAccess = input.tokenLinksEnabled !== false;
+    publicAccess = !tokenAccess && input.publicLinksEnabled === true;
+  }
+  const note = input.note !== undefined ? input.note.trim() : (existing.note ?? '');
+  const slug = name !== existing.name ? await allocateUniqueBundleSlug(env, name, bundleId) : existing.slug;
+  const timestamp = now();
+  await env.DB.prepare(
+    `UPDATE subscription_bundles SET name = ?, slug = ?, format = ?, category_ids = ?, public_links_enabled = ?, token_links_enabled = ?, note = ?, updated_at = ? WHERE id = ?`,
+  ).bind(name, slug, format, JSON.stringify(categoryIds), publicAccess ? 1 : 0, tokenAccess ? 1 : 0, note, timestamp, bundleId).run();
+  return getSubscriptionBundle(env, bundleId);
+}
+
+export async function deleteSubscriptionBundle(env: Env, bundleId: string) {
+  await env.DB.prepare('DELETE FROM subscription_bundles WHERE id = ?').bind(bundleId).run();
+}
+
+/** 按打包订阅合并多个分类的启用规则（跨分类去重） */
+export async function buildMergedCategoryForBundle(env: Env, bundle: SubscriptionBundle): Promise<RuleCategory | null> {
+  if (!bundle.categoryIds.length) return null;
+  const placeholders = bundle.categoryIds.map(() => '?').join(',');
+  const categoryRows = await env.DB.prepare(
+    `SELECT * FROM categories WHERE id IN (${placeholders}) AND enabled = 1`,
+  ).bind(...bundle.categoryIds).all<CategoryRow>();
+  const categories = categoryRows.results ?? [];
+  if (!categories.length) return null;
+  const rules = await listRules(env, { limit: 100_000 });
+  const allowed = new Set(bundle.categoryIds);
+  const seen = new Set<string>();
+  const mergedRules: DomainRule[] = [];
+  for (const rule of rules) {
+    if (!rule.categoryId || !allowed.has(rule.categoryId) || !rule.enabled) continue;
+    const key = `${rule.type}:${rule.value}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    mergedRules.push(rule);
+  }
+  const latest = categories.reduce((max, row) => (row.updated_at > max ? row.updated_at : max), categories[0].updated_at);
+  return {
+    id: bundle.id,
+    name: bundle.name,
+    slug: bundle.slug,
+    description: bundle.categoryNames?.join(' · ') || '',
+    note: bundle.note,
+    enabled: true,
+    rules: mergedRules,
+    updatedAt: latest,
+    publicLinksEnabled: bundle.publicLinksEnabled,
+    tokenLinksEnabled: bundle.tokenLinksEnabled,
+  };
 }

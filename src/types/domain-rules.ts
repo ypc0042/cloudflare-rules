@@ -145,3 +145,25 @@ export type ImportPreview = {
   invalidValues: string[];
   comments: string[];
 };
+
+/** 合并多个分类后保存的「打包订阅」 */
+export type BundleFormat = 'yaml' | 'list' | 'txt' | 'json';
+
+export type SubscriptionBundle = {
+  id: string;
+  name: string;
+  slug: string;
+  format: BundleFormat;
+  categoryIds: string[];
+  categoryNames?: string[];
+  publicLinksEnabled: boolean;
+  tokenLinksEnabled: boolean;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+  publicUrl?: string;
+  tokenUrl?: string;
+  recommendedUrl?: string;
+  /** 成员分类中上游源最近一次成功同步时间 */
+  lastSyncedAt?: string;
+};

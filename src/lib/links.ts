@@ -1,5 +1,5 @@
-import type { ClientId, ClientLink, RuleCategory, RulesData } from '../types/domain-rules';
-import { fileNameForClient } from './formatters';
+import type { ClientId, ClientLink, RuleCategory, RulesData, SubscriptionBundle } from '../types/domain-rules';
+import { bundleFileName, fileNameForClient } from './formatters';
 
 const clients: Array<Omit<ClientLink, 'fileName' | 'publicUrl' | 'tokenUrl' | 'recommendedUrl' | 'supported'>> = [
   { id: 'general', name: 'General', icon: 'GEN', description: '通用 LIST，适合多数客户端手动导入' },
@@ -60,4 +60,19 @@ export function linksForCategory(category: RuleCategory, data: RulesData, reques
 
 export function linksByCategory(data: RulesData, requestUrl: string, ruleToken?: string) {
   return Object.fromEntries(data.categories.map((category) => [category.id, linksForCategory(category, data, requestUrl, ruleToken)]));
+}
+
+export function linksForBundle(bundle: SubscriptionBundle, data: RulesData, requestUrl: string, ruleToken?: string): SubscriptionBundle {
+  const base = siteBase(requestUrl, data);
+  const fileName = bundleFileName(bundle.slug, bundle.format);
+  const publicUrl = `${base}/rules/${fileName}`;
+  const tokenUrl = ruleToken ? `${base}/sub/${encodeURIComponent(ruleToken)}/${fileName}` : '';
+  const tokenEnabled = bundle.tokenLinksEnabled !== false;
+  const publicEnabled = !tokenEnabled && bundle.publicLinksEnabled !== false;
+  const recommendedUrl = tokenEnabled && tokenUrl ? tokenUrl : publicEnabled ? publicUrl : '';
+  return { ...bundle, publicUrl, tokenUrl, recommendedUrl };
+}
+
+export function withBundleLinks(bundles: SubscriptionBundle[], data: RulesData, requestUrl: string, ruleToken?: string) {
+  return bundles.map((bundle) => linksForBundle(bundle, data, requestUrl, ruleToken));
 }

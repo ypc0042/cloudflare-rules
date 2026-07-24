@@ -7,23 +7,29 @@ import { apiKeyConfigured, apiKeyStatus, authConfigured, checkPassword, createAp
 import {
   addRule,
   batchUpdateRules,
+  buildMergedCategoryForBundle,
   createCategory,
+  createSubscriptionBundle,
   deleteCategory,
   deleteRule,
+  deleteSubscriptionBundle,
   getBackupData,
   getRulesOverview,
   getRulesData,
+  getSubscriptionBundleBySlug,
   importRulesData,
   insertRule,
   listRules,
+  listSubscriptionBundles,
   saveSettings,
   updateCategory,
   updateRule,
+  updateSubscriptionBundle,
 } from '../lib/db';
 import { parseBulkImport } from '../lib/parser';
 import { error, json, textFile } from '../lib/response';
-import { linksByCategory } from '../lib/links';
-import { resolveFile } from '../lib/formatters';
+import { linksByCategory, withBundleLinks } from '../lib/links';
+import { formatterForBundleFormat, parseBundleFileName, resolveFile } from '../lib/formatters';
 import { syncRuleSources } from '../lib/sync';
 import { searchGeoSources } from '../lib/geosite';
 
@@ -234,6 +240,47 @@ app.get('/api/links', requireAuth, async (c) => {
   return json({ links: linksByCategory(data, externalRequestUrl(c), c.env.RULE_TOKEN) });
 });
 
+app.get('/api/bundles', requireAuth, async (c) => {
+  const [bundles, data] = await Promise.all([listSubscriptionBundles(c.env), getRulesOverview(c.env)]);
+  return json({ bundles: withBundleLinks(bundles, data, externalRequestUrl(c), c.env.RULE_TOKEN) });
+});
+
+app.post('/api/bundles', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({})) as {
+    name?: string;
+    categoryIds?: string[];
+    format?: string;
+    tokenLinksEnabled?: boolean;
+    publicLinksEnabled?: boolean;
+    note?: string;
+  };
+  try {
+    const created = await createSubscriptionBundle(c.env, body);
+    if (!created) return error('创建失败。', 500);
+    const data = await getRulesOverview(c.env);
+    return json({ bundle: withBundleLinks([created], data, externalRequestUrl(c), c.env.RULE_TOKEN)[0] }, { status: 201 });
+  } catch (cause) {
+    return error(cause instanceof Error ? cause.message : '创建失败。', 400);
+  }
+});
+
+app.patch('/api/bundles/:id', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+  try {
+    const updated = await updateSubscriptionBundle(c.env, c.req.param('id'), body);
+    if (!updated) return error('订阅不存在。', 404);
+    const data = await getRulesOverview(c.env);
+    return json({ bundle: withBundleLinks([updated], data, externalRequestUrl(c), c.env.RULE_TOKEN)[0] });
+  } catch (cause) {
+    return error(cause instanceof Error ? cause.message : '更新失败。', 400);
+  }
+});
+
+app.delete('/api/bundles/:id', requireAuth, async (c) => {
+  await deleteSubscriptionBundle(c.env, c.req.param('id'));
+  return json({ ok: true });
+});
+
 app.post('/api/sync', requireAuth, async (c) => {
   const results = await syncRuleSources(c.env);
   return json({ results, ...withLinks(c, await getRulesOverview(c.env)) });
@@ -254,6 +301,23 @@ app.put('/api/data', requireAuth, async (c) => {
 
 async function subscription(c: AppContext, file: string, access: 'public' | 'token') {
   if (!safeFileName(file)) return c.notFound();
+
+  // 打包订阅：bundle-<slug>.yaml|list|txt|json
+  const bundleRef = parseBundleFileName(file);
+  if (bundleRef) {
+    const bundle = await getSubscriptionBundleBySlug(c.env, bundleRef.slug);
+    if (!bundle) return c.notFound();
+    if (access === 'public' && (bundle.tokenLinksEnabled !== false || bundle.publicLinksEnabled === false)) return c.notFound();
+    if (access === 'token' && bundle.tokenLinksEnabled === false) return c.notFound();
+    const merged = await buildMergedCategoryForBundle(c.env, bundle);
+    if (!merged) return c.notFound();
+    const data = await getRulesData(c.env);
+    const formatter = formatterForBundleFormat(bundle.format);
+    const body = formatter.format(merged, data);
+    const contentType = formatter.id === 'json' ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8';
+    return textFile(body, contentType);
+  }
+
   const data = await getRulesData(c.env);
   const result = resolveFile(data, file);
   if (!result) return c.notFound();

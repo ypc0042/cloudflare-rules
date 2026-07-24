@@ -193,3 +193,27 @@ export function resolveFile(data: RulesData, fileName: string) {
   }
   return null;
 }
+
+/** 打包订阅文件名：bundle-<slug>.<ext>，避免与单分类 slug 冲突 */
+export function bundleFileName(slug: string, format: 'yaml' | 'list' | 'txt' | 'json') {
+  const base = slugify(slug) || 'bundle';
+  if (format === 'yaml') return `bundle-${base}.yaml`;
+  if (format === 'list') return `bundle-${base}.list`;
+  if (format === 'txt') return `bundle-${base}.txt`;
+  return `bundle-${base}.json`;
+}
+
+export function formatterForBundleFormat(format: 'yaml' | 'list' | 'txt' | 'json'): Formatter {
+  if (format === 'yaml') return formatters.yaml;
+  if (format === 'list') return formatters.general;
+  if (format === 'txt') return formatters.url;
+  return formatters.json;
+}
+
+export function parseBundleFileName(fileName: string): { slug: string; format: 'yaml' | 'list' | 'txt' | 'json' } | null {
+  const lower = fileName.toLowerCase();
+  const match = /^bundle-(.+)\.(yaml|yml|list|txt|json)$/.exec(lower);
+  if (!match) return null;
+  const ext = match[2] === 'yml' ? 'yaml' : match[2];
+  return { slug: match[1], format: ext as 'yaml' | 'list' | 'txt' | 'json' };
+}
