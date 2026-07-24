@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.11.1",
   "type": "module",
-  "description": "Self-hosted rules console for Cloudflare Workers (D1).",
+  "description": "Self-hosted rules console for Cloudflare Workers (D1). Deploy command on Cloudflare Builds: pnpm run deploy (not bare pnpm deploy).",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "pnpm build:client && pnpm prepare:cloudflare-deploy",

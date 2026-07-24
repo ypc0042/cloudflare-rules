@@ -18,5 +18,8 @@ crons = ["*/5 * * * *"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "cloudflare-rules-db"
-# database_id 首次部署后由 Dashboard / Builds 写入；本地可不填。
+# 显示名可自定（如 cloudflare-rules-d）；若 Dashboard 里创建失败多为「名称已占用」，换名即可。
+# 代码只依赖 binding 名 DB，不依赖 database_name 字符串。
+database_name = "cloudflare-rules-d"
+# 首次在 Dashboard 创建 D1 后，把 database_id 填上，本机 wrangler d1 更稳；也可由 Builds 自动关联。
+# database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

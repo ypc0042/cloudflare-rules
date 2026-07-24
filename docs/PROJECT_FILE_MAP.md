@@ -208,21 +208,26 @@ Cloudflare Rules 是自托管规则控制台：聚合自定义规则、远程订
 | `docs/wiki/Docker-Compose-Deployment.md` | ~~Docker 教程~~（删除） |
 | `docs/dockerhub/README.md` | ~~Hub 文案~~（删除） |
 | `docs/PROJECT_FILE_MAP.md` | 本文件 |
+| `docs/DEPLOY.md` | 部署清单、踩坑记录、迁移修复命令 |
 
 ---
 
 ## 13. 问题排查入口
 
+完整部署踩坑与修复命令见 **[DEPLOY.md](./DEPLOY.md)**。
+
 | 问题类型 | 优先检查 |
 | --- | --- |
-| 登录 / 401 | `lib/auth.ts`、`.dev.vars`、Secrets |
+| 登录 / 401 /「尚未配置登录密钥」 | `lib/auth.ts`：需 **ADMIN_PASSWORD + SESSION_SECRET**；Dashboard Secrets；改完后重新部署；`/api/auth/me` |
 | 页面白屏 | `frontend/main.tsx`、Assets、`app.ts` 静态回退 |
 | API 错误 | `use-domain-admin.ts`、`server/app.ts`、`lib/db.ts` |
 | 规则解析 | `parser.ts`、`rule-types.ts` |
 | 同步失败 | `sync.ts`、`geosite.ts`、`github-mirror.ts`、category_sources |
 | 订阅 404 | `app.ts` 订阅路由、访问策略、`RULE_TOKEN` |
 | 格式不对 | `formatters/index.ts`、`links.ts` |
-| D1/迁移 | `migrations/`、`db.ts` ensureDatabase、`wrangler d1` |
+| D1 未连接 | Bindings 是否有 **`DB`**；`d1Ready` |
+| D1 迁移失败 / 重复列 | `migrations/`、`d1_migrations` 表（不是 `_migrations`）；见 DEPLOY.md §7 |
+| **部署 `ERR_PNPM_NOTHING_TO_DEPLOY`** | Deploy 须 **`pnpm run deploy`**，禁止裸 `pnpm deploy` |
 | **CF 构建 ENOENT** | `prepare-cloudflare-deploy.mjs` 路径 vs 实际 `dist/*/wrangler.json` |
 | **名称非法** | Worker 名仅 `a-z0-9-`，禁止 `_` |
 
@@ -236,7 +241,9 @@ Cloudflare Rules 是自托管规则控制台：聚合自定义规则、远程订
 | 非法名 | `cloudflare_rules`（下划线） |
 | Vite 插件产物目录 | 本仓库固定为 `dist/worker/`（`viteEnvironment.name = worker`）；默认映射会变成非法的 `cloudflare_rules` |
 | 客户端静态 | `dist/client/` |
-| prepare 脚本 | 扫描 `dist/*/wrangler.json`，勿写死 `cloudflare_rules` |
+| prepare 脚本 | 扫描 `dist/*/wrangler.json`，勿写死下划线目录 |
+| Build / Deploy | Build=`pnpm build`；Deploy=`pnpm run deploy` 或 `npx wrangler deploy --keep-vars` |
+| D1 binding | 必须为 **`DB`**；`database_name` 可与 Dashboard 显示名一致（如 `cloudflare-rules-d`） |
 
 ---
 
@@ -245,3 +252,5 @@ Cloudflare Rules 是自托管规则控制台：聚合自定义规则、远程订
 删除：`src/runtimes/node.ts`、`infrastructure/database/sqlite/**`、`infrastructure/assets/node.ts`、`infrastructure/scheduler/node.ts`、`infrastructure/config/node.ts`、`Dockerfile`、`docker-compose.yml`、`.env.example`、Docker 文档与 `docker-publish` workflow；依赖中去掉 `better-sqlite3`、`@hono/node-server` 等。
 
 保留：Worker、Hono app、`src/lib/*`、D1 adapter、前端、migrations、`wrangler.toml`。
+
+产品名已统一为 **Cloudflare Rules** / 包名 **`cloudflare-rules`**（原 Private Rules 二改）。
