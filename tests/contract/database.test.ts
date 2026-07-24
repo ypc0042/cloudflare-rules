@@ -7,6 +7,7 @@ import { addRule, createCategory, deleteCategory, getBackupData, getRulesData, g
 import { syncRuleSources } from '../../src/lib/sync';
 import type { Env } from '../../src/types';
 import type { DatabasePort } from '../../src/application/ports/database';
+import { UPSTREAM_RULE_PREVIEW_LIMIT } from '../../src/types/domain-rules';
 
 const migrations = resolve(process.cwd(), 'migrations');
 
@@ -64,22 +65,23 @@ describe('d1 database contract', () => {
     expect(JSON.stringify(backup).length).toBeLessThan(JSON.stringify(full).length);
   });
 
-  it('keeps the admin overview to 1000 mirrored rules and loads larger sets on demand', { timeout: 120_000 }, async () => {
+  it('keeps the admin overview to a limited mirrored-rule preview and loads larger sets on demand', { timeout: 120_000 }, async () => {
     const data = await createCategory(env, { name: 'd1-large-preview', sourceUrls: ['https://example.com/large.list'] });
     const category = data.categories.find((item) => item.name === 'd1-large-preview')!;
     const source = category.sources![0];
     const timestamp = new Date().toISOString();
+    const totalMirrored = UPSTREAM_RULE_PREVIEW_LIMIT + 5;
     const insertSql = 'INSERT INTO rules (id, category_id, value, type, display_type, note, enabled, sort_order, source_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-    const statements = Array.from({ length: 1005 }, (_, index) => env.DB.prepare(insertSql).bind(
+    const statements = Array.from({ length: totalMirrored }, (_, index) => env.DB.prepare(insertSql).bind(
       `d1-large-${index}`, category.id, `speed-${index}.example`, 'DOMAIN-SUFFIX', '', '', 1, index, source.id, timestamp, timestamp,
     ));
     for (let offset = 0; offset < statements.length; offset += 100) await env.DB.batch(statements.slice(offset, offset + 100));
 
     const overviewCategory = (await getRulesOverview(env)).categories.find((item) => item.id === category.id)!;
-    expect(overviewCategory.ruleCount).toBe(1005);
-    expect(overviewCategory.rules).toHaveLength(1000);
-    expect(await listRules(env, { categoryId: category.id, source: 'upstream' })).toHaveLength(1000);
-    expect(await listRules(env, { query: 'speed', limit: 0 })).toHaveLength(1005);
+    expect(overviewCategory.ruleCount).toBe(totalMirrored);
+    expect(overviewCategory.rules).toHaveLength(UPSTREAM_RULE_PREVIEW_LIMIT);
+    expect(await listRules(env, { categoryId: category.id, source: 'upstream' })).toHaveLength(UPSTREAM_RULE_PREVIEW_LIMIT);
+    expect(await listRules(env, { query: 'speed', limit: 0 })).toHaveLength(totalMirrored);
   });
 
   it('persists and applies the GitHub rewrite setting during sync', async () => {
