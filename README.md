@@ -34,8 +34,8 @@ Cloudflare Rules 把自定义规则、远程订阅、GeoSite / GeoIP 数据源�
 
 1. **GitHub** 账号（放代码）  
 2. **Cloudflare** 账号（免费即可）  
-3. 本机 **Node.js 20+** 与 **pnpm**（本地开发 / **可选**迁移时用）  
-4. 约 20～40 分钟，按顺序做完下面清单  
+3. （仅本地开发需要）Node.js 20+ 与 pnpm  
+4. 约 15～30 分钟，按顺序做完下面清单  
 
 > **命名铁律**  
 > Worker / 项目名只能：`a-z`、`0-9`、连字符 `-`，**禁止下划线 `_`**。  
@@ -52,12 +52,11 @@ Cloudflare Rules 把自定义规则、远程订阅、GeoSite / GeoIP 数据源�
 | ③ | 创建 D1 | D1 列表能看到库 |
 | ④ | 绑定 D1，**Variable name 必须是 `DB`** | Settings → Bindings 有 `DB` |
 | ⑤ | Secrets：`ADMIN_PASSWORD` + `SESSION_SECRET`（建议加 `RULE_TOKEN`） | `/api/auth/me` 对应字段为 `true` |
-| ⑥ | **打开一次** `/admin`（触发自动建表） | 能进后台；数据库显示已连接 |
-| ⑦ | （可选）本机 `pnpm db:migrate:remote` | 对齐官方迁移账本 / 排错 |
+| ⑥ | 打开一次 `/admin/login` 并登录 | 能进后台；设置里数据库「已连接」 |
 
-> **Fork 用户：第 ⑥ 步一般就够了，不必本机跑迁移。**  
-> 表结构由 Worker 内 `ensureDatabase` 在首次请求时幂等创建。  
-> `pnpm db:migrate:remote` 仅在你要使用 wrangler 迁移账本、或排查 schema 时再跑。
+> **不需要在本机执行 `pnpm db:migrate:remote`。**  
+> 表结构由 Worker 内 `ensureDatabase` 在**第一次请求**时自动创建/补齐（含规则、订阅集、失败退避等全部列）。  
+> 本机迁移脚本仅留给开发者维护 `migrations/` 账本时使用，**Fork 上线可完全忽略。**
 
 ---
 
@@ -189,58 +188,42 @@ https://你的域名/api/auth/me
 
 ---
 
-## 第六步：数据库（建表）
+## 第六步：数据库（自动建表，无需本机操作）
 
-### 推荐（Fork / 首次上线）
+**Fork / 首次上线不需要在电脑上跑任何迁移命令。**
 
-1. D1 已绑定为 **`DB`**  
-2. Secrets 已配好并部署  
-3. 浏览器打开一次：
+只要已经：
+
+1. 创建 D1 并绑定为 **`DB`**
+2. 配置好 Secrets 并完成部署
+
+然后用浏览器打开：
 
 ```text
 https://你的域名/admin
 ```
 
-Worker 会运行 **`ensureDatabase`**，自动创建/补齐表（含规则、数据源、合并订阅、失败退避字段等）。**一般不需要本机执行迁移。**
+或登录页 `/admin/login`。
 
-### 可选：本机对齐官方迁移账本
+Worker 会执行 **`ensureDatabase`**：
 
-需要 wrangler 的 `d1_migrations` 记录完整时，或排查 schema 时：
+- 自动 `CREATE TABLE IF NOT EXISTS …`
+- 自动补齐后续版本新增的列（幂等，可重复执行）
+- 尽量同步官方 `d1_migrations` 记录，避免以后有人再跑 wrangler 时撞 `duplicate column`
+
+打开后台能进、**设置 → 服务状态**里数据库为「已连接」，即表示表已就绪。
+
+### 开发者可选：本机迁移脚本
+
+仅当你在改 `migrations/*.sql`、或排查「结构与 wrangler 账本不一致」时才需要：
 
 ```bash
-cd 你的项目根目录
-npx wrangler login
-pnpm db:migrate:remote
+pnpm db:migrate:remote   # 安全脚本，推荐
+pnpm db:migrate:local    # 本地 D1
 ```
 
-该命令走 **`scripts/d1-migrate-safe.mjs`**（推荐）：
+普通使用者、Fork 部署：**跳过本节即可。**
 
-1. 检查表/列是否已存在  
-2. 把「结构已满足」但账本未记的迁移 **补记**  
-3. 再执行 `wrangler d1 migrations apply`
-
-成功示例：
-
-```text
-✅ D1 migrations are up to date.
-# 或 No migrations to apply!
-```
-
-| 命令 | 说明 |
-| --- | --- |
-| `pnpm db:migrate:remote` | 安全脚本（**推荐**） |
-| `pnpm db:migrate:local` | 本地 D1 安全迁移 |
-| `pnpm db:migrate:remote:raw` | 裸 wrangler，**无** duplicate 防护 |
-
-### 迁移常见问题
-
-| 现象 | 原因 | 处理 |
-| --- | --- | --- |
-| `duplicate column name: ...` | 结构已有、账本不全 | 用 `pnpm db:migrate:remote`，见 [docs/DEPLOY.md](./docs/DEPLOY.md) |
-| `no such table: _migrations` | 表名写错 | 正确表名是 **`d1_migrations`** |
-| 找不到数据库 | 未绑 `DB` / `database_id` 不对 | 检查 Bindings 与 `wrangler.toml` |
-
----
 
 ## 第七步：登录与日常使用
 
@@ -337,7 +320,7 @@ pnpm exec wrangler deploy --dry-run --keep-vars
 | 4 | `-join` 不是命令 | 在 **PowerShell** 里生成随机串 |
 | 5 | D1 名不可用 | 多半重名，换名；绑定仍是 `DB` |
 | 6 | 不会绑库 | Bindings → D1 → **`DB`** |
-| 7 | 迁移 duplicate column | 用 **`pnpm db:migrate:remote`**（安全脚本） |
+| 7 | 迁移 duplicate column（仅开发者跑 wrangler 时） | 用 **`pnpm db:migrate:remote`**；日常靠 ensureDatabase 即可 |
 | 8 | 订阅集 `proxy ["xxx"] not found` | 更新到最新代码；`RULE-SET` 第三段不要带错误引号 |
 | 9 | 旧 better-sqlite3 / Docker | 本仓库已 Cloudflare-only |
 

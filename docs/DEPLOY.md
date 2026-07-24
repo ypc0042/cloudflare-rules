@@ -1,7 +1,13 @@
-## Schema 与迁移
+## Schema 与迁移（给使用者看）
 
-- **日常 / Fork**：绑定 D1 并部署后访问后台即可，`ensureDatabase` 幂等建表。
-- **可选**：`pnpm db:migrate:remote` 对齐 wrangler `d1_migrations` 账本。
+| 角色 | 要不要本机 `pnpm db:migrate:remote` |
+| --- | --- |
+| **Fork / 上线使用** | **不需要**。绑 D1（`DB`）+ Secrets + 部署后打开一次后台即可 |
+| **改库表结构的开发者** | 需要时再跑安全脚本，对齐 `migrations/` 与 `d1_migrations` |
+
+运行时入口：`ensureDatabase`（`src/lib/db.ts`）在每次 Worker isolate 首次访问时幂等建表/加列。
+
+---
 
 # Cloudflare Rules — 部署说明与踩坑记录
 

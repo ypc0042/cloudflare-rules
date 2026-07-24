@@ -110,6 +110,8 @@ export function ensureDatabase(env: Env) {
       user_agent TEXT DEFAULT 'clash-verge/v2.5.1',
       source_type TEXT DEFAULT 'url', geosite_name TEXT, geoip_name TEXT,
       rule_optimization TEXT DEFAULT 'none', last_original_count INTEGER DEFAULT 0,
+      consecutive_failures INTEGER DEFAULT 0,
+      skip_auto_sync_on TEXT,
       FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
     )`,
     `INSERT OR IGNORE INTO settings (key, value) VALUES
@@ -215,16 +217,18 @@ async function reconcileD1MigrationRecords(env: Env) {
   ];
 
   try {
-    const [categoryColumns, ruleColumns, sourceColumns, tables] = await Promise.all([
+    const [categoryColumns, ruleColumns, sourceColumns, tables, bundleColumns] = await Promise.all([
       env.DB.prepare('PRAGMA table_info(categories)').all<{ name: string }>(),
       env.DB.prepare('PRAGMA table_info(rules)').all<{ name: string }>(),
       env.DB.prepare('PRAGMA table_info(category_sources)').all<{ name: string }>(),
       env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table'").all<{ name: string }>(),
+      env.DB.prepare('PRAGMA table_info(subscription_bundles)').all<{ name: string }>().catch(() => ({ results: [] as { name: string }[] })),
     ]);
     const categoryNames = new Set((categoryColumns.results ?? []).map((column) => column.name));
     const ruleNames = new Set((ruleColumns.results ?? []).map((column) => column.name));
     const sourceNames = new Set((sourceColumns.results ?? []).map((column) => column.name));
     const tableNames = new Set((tables.results ?? []).map((row) => row.name));
+    const bundleNames = new Set((bundleColumns.results ?? []).map((column) => column.name));
 
     const satisfied = (name: string) => {
       switch (name) {
@@ -249,9 +253,9 @@ async function reconcileD1MigrationRecords(env: Env) {
         case '0011_subscription_bundles.sql':
           return tableNames.has('subscription_bundles');
         case '0012_bundle_kind.sql':
-          return tableNames.has('subscription_bundles');
+          return tableNames.has('subscription_bundles') && bundleNames.has('kind');
         case '0013_source_failure_backoff.sql':
-          return tableNames.has('category_sources');
+          return sourceNames.has('consecutive_failures') && sourceNames.has('skip_auto_sync_on');
         default:
           return false;
       }
