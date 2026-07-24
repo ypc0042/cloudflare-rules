@@ -17,6 +17,7 @@ Cloudflare Rules 把自定义规则、远程订阅、GeoSite / GeoIP 数据源�
 | **订阅集** | 完整 Clash / Mihomo **配置模板**（策略组 + 分流 + 预留机场订阅位；内置 DIRECT / REJECT） |
 | **数据** | 保存在你自己的 **Cloudflare D1** |
 | **访问** | 每条规则 / 打包项可设：私密链接 / 公开链接 / 禁止访问 |
+| **图标** | 内置多套 [Qure](https://github.com/Koolson/Qure) 分包；支持自定义图标包；规则名可自动匹配图标 |
 
 - **不支持** Docker / 自建 Node（本仓库为 Cloudflare-only）
 
@@ -27,6 +28,14 @@ Cloudflare Rules 把自定义规则、远程订阅、GeoSite / GeoIP 数据源�
 | [docs/DEPLOY.md](./docs/DEPLOY.md) | 部署踩坑与排错 |
 | [docs/PROJECT_FILE_MAP.md](./docs/PROJECT_FILE_MAP.md) | 文件职责 |
 | [docs/SUBSCRIPTION_PLAN.md](./docs/SUBSCRIPTION_PLAN.md) | 规则集 / 订阅集设计说明 |
+
+---
+
+
+> **项目来源**  
+> 本项目由 [Cyclince/Private_rules](https://github.com/Cyclince/Private-rules) **二改**而来。  
+> 在原作者工作基础上，调整为 **仅 Cloudflare Workers + D1**，并增加规则集/订阅集、部署与同步等方面的改动。  
+> 感谢原作者的开源贡献。
 
 ---
 
@@ -236,7 +245,7 @@ https://你的域名/admin/login
 ### 建议顺序
 
 1. **设置 → 服务状态**：数据库 / 密钥应为已配置  
-2. **规则**：建分类；手写规则或挂远程 / GeoSite / GeoIP 源  
+2. **规则**：建分类；手写规则或挂远程 / GeoSite / GeoIP 源；输入名称可**自动匹配** Qure 等图标包中的图标（可手动更换）  
 3. **订阅**（见下）  
 4. **设置**：备份 / 恢复 JSON  
 
@@ -340,6 +349,11 @@ pnpm exec wrangler deploy --dry-run --keep-vars
 - Cloudflare Workers、Hono、D1  
 - React 19、TypeScript、Vite  
 - Cron：约每 5 分钟扫描；同步间隔与失败退避见上文  
+
+## 致谢
+
+- 原项目：[Cyclince/Private_rules](https://github.com/Cyclince/Private-rules)（本仓库二改基础）
+- 规则图标：[Koolson/Qure](https://github.com/Koolson/Qure) 等图标包
 
 ## 许可证
 
