@@ -104,6 +104,8 @@ function migrationSatisfied(name, tables, categoryCols, ruleCols, sourceCols) {
       return sourceCols.has('rule_optimization') && sourceCols.has('last_original_count');
     case '0011_subscription_bundles.sql':
       return tables.has('subscription_bundles');
+    case '0012_bundle_kind.sql':
+      return tables.has('subscription_bundles');
     default:
       return false;
   }

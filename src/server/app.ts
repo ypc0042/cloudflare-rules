@@ -30,6 +30,7 @@ import { parseBulkImport } from '../lib/parser';
 import { error, json, textFile } from '../lib/response';
 import { linksByCategory, withBundleLinks } from '../lib/links';
 import { formatterForBundleFormat, parseBundleFileName, resolveFile } from '../lib/formatters';
+import { buildClashProfileYaml, parseProfileFileName } from '../lib/clash-profile';
 import { syncRuleSources } from '../lib/sync';
 import { searchGeoSources } from '../lib/geosite';
 
@@ -248,6 +249,7 @@ app.get('/api/bundles', requireAuth, async (c) => {
 app.post('/api/bundles', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({})) as {
     name?: string;
+    kind?: string;
     categoryIds?: string[];
     format?: string;
     tokenLinksEnabled?: boolean;
@@ -302,11 +304,30 @@ app.put('/api/data', requireAuth, async (c) => {
 async function subscription(c: AppContext, file: string, access: 'public' | 'token') {
   if (!safeFileName(file)) return c.notFound();
 
-  // 打包订阅：bundle-<slug>.yaml|list|txt|json
+  // 订阅集：完整 Clash 模板 profile-<slug>.yaml
+  const profileRef = parseProfileFileName(file);
+  if (profileRef) {
+    const bundle = await getSubscriptionBundleBySlug(c.env, profileRef.slug);
+    if (!bundle || bundle.kind !== 'profile') return c.notFound();
+    if (access === 'public' && (bundle.tokenLinksEnabled !== false || bundle.publicLinksEnabled === false)) return c.notFound();
+    if (access === 'token' && bundle.tokenLinksEnabled === false) return c.notFound();
+    const data = await getRulesData(c.env);
+    const categories = data.categories.filter((category) => bundle.categoryIds.includes(category.id));
+    const body = buildClashProfileYaml({
+      bundle,
+      categories,
+      data,
+      requestUrl: externalRequestUrl(c),
+      ruleToken: access === 'token' ? c.env.RULE_TOKEN : undefined,
+    });
+    return textFile(body, 'text/yaml; charset=utf-8');
+  }
+
+  // 规则集打包：bundle-<slug>.yaml|list|txt|json
   const bundleRef = parseBundleFileName(file);
   if (bundleRef) {
     const bundle = await getSubscriptionBundleBySlug(c.env, bundleRef.slug);
-    if (!bundle) return c.notFound();
+    if (!bundle || bundle.kind === 'profile') return c.notFound();
     if (access === 'public' && (bundle.tokenLinksEnabled !== false || bundle.publicLinksEnabled === false)) return c.notFound();
     if (access === 'token' && bundle.tokenLinksEnabled === false) return c.notFound();
     const merged = await buildMergedCategoryForBundle(c.env, bundle);

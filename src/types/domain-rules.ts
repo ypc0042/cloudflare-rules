@@ -1,4 +1,5 @@
-export const UPSTREAM_RULE_PREVIEW_LIMIT = 1000;
+/** 管理后台列表预览：每分类上游规则条数上限（完整列表走 /api/rules 按需加载） */
+export const UPSTREAM_RULE_PREVIEW_LIMIT = 80;
 
 export type RuleOptimizationMode = 'none' | 'conservative' | 'aggressive';
 
@@ -146,13 +147,18 @@ export type ImportPreview = {
   comments: string[];
 };
 
-/** 合并多个分类后保存的「打包订阅」 */
+/** 规则集格式（仅 rules 类打包） */
 export type BundleFormat = 'yaml' | 'list' | 'txt' | 'json';
+
+/** rules = 规则集；profile = 完整 Clash 模板（订阅集） */
+export type BundleKind = 'rules' | 'profile';
 
 export type SubscriptionBundle = {
   id: string;
   name: string;
   slug: string;
+  /** 默认 rules；profile 时 format 固定为 yaml */
+  kind: BundleKind;
   format: BundleFormat;
   categoryIds: string[];
   categoryNames?: string[];

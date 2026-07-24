@@ -1,4 +1,4 @@
-import type { BackupRuleSource, BundleFormat, DomainRule, RuleCategory, RuleOptimizationMode, RuleSettings, RuleSource, RulesBackupData, RulesData, SubscriptionBundle } from '../types/domain-rules';
+import type { BackupRuleSource, BundleFormat, BundleKind, DomainRule, RuleCategory, RuleOptimizationMode, RuleSettings, RuleSource, RulesBackupData, RulesData, SubscriptionBundle } from '../types/domain-rules';
 import { UPSTREAM_RULE_PREVIEW_LIMIT } from '../types/domain-rules';
 import type { Env } from '../types';
 import { normalizeGithubMirrorUrl, sourceNameFromSubscriptionUrl } from './github-mirror';
@@ -114,7 +114,8 @@ export function ensureDatabase(env: Env) {
       ('baseUrl', ''), ('policyName', ''), ('githubMirrorUrl', ''), ('publicLinksEnabled', 'true'), ('tokenLinksEnabled', 'true'), ('customIconPackUrls', '[]'), ('customIconPackNames', '{}')`,
     `CREATE TABLE IF NOT EXISTS subscription_bundles (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE,
-      format TEXT NOT NULL DEFAULT 'yaml', category_ids TEXT NOT NULL DEFAULT '[]',
+      format TEXT NOT NULL DEFAULT 'yaml', kind TEXT NOT NULL DEFAULT 'rules',
+      category_ids TEXT NOT NULL DEFAULT '[]',
       public_links_enabled INTEGER DEFAULT 0, token_links_enabled INTEGER DEFAULT 1,
       note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`,
@@ -151,6 +152,13 @@ export function ensureDatabase(env: Env) {
     if (!sourceNames.has('geoip_name')) alters.push('ALTER TABLE category_sources ADD COLUMN geoip_name TEXT');
     if (!sourceNames.has('rule_optimization')) alters.push("ALTER TABLE category_sources ADD COLUMN rule_optimization TEXT DEFAULT 'none'");
     if (!sourceNames.has('last_original_count')) alters.push('ALTER TABLE category_sources ADD COLUMN last_original_count INTEGER DEFAULT 0');
+    try {
+      const bundleColumns = await env.DB.prepare('PRAGMA table_info(subscription_bundles)').all<{ name: string }>();
+      const bundleNames = new Set((bundleColumns.results ?? []).map((column) => column.name));
+      if (bundleNames.size && !bundleNames.has('kind')) alters.push("ALTER TABLE subscription_bundles ADD COLUMN kind TEXT NOT NULL DEFAULT 'rules'");
+    } catch {
+      /* table may not exist yet */
+    }
     for (const statement of alters) await env.DB.prepare(statement).run();
     await env.DB.prepare("UPDATE category_sources SET url = 'https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/' || geoip_name || '.txt' WHERE source_type = 'geoip' AND geoip_name IS NOT NULL AND url NOT LIKE '%/text/%.txt'").run();
     await env.DB.batch([
@@ -198,6 +206,7 @@ async function reconcileD1MigrationRecords(env: Env) {
     '0009_rule_optimization_levels.sql',
     '0010_github_mirror_setting.sql',
     '0011_subscription_bundles.sql',
+    '0012_bundle_kind.sql',
   ];
 
   try {
@@ -233,6 +242,8 @@ async function reconcileD1MigrationRecords(env: Env) {
         case '0008_source_rule_optimization.sql':
           return sourceNames.has('rule_optimization') && sourceNames.has('last_original_count');
         case '0011_subscription_bundles.sql':
+          return tableNames.has('subscription_bundles');
+        case '0012_bundle_kind.sql':
           return tableNames.has('subscription_bundles');
         default:
           return false;
@@ -794,6 +805,7 @@ type BundleRow = {
   name: string;
   slug: string;
   format: string;
+  kind: string | null;
   category_ids: string;
   public_links_enabled: number | null;
   token_links_enabled: number | null;
@@ -817,6 +829,10 @@ function parseCategoryIds(raw: string): string[] {
 function normalizeBundleFormat(value?: string | null): BundleFormat {
   const format = (value ?? 'yaml').toLowerCase() as BundleFormat;
   return BUNDLE_FORMATS.includes(format) ? format : 'yaml';
+}
+
+function normalizeBundleKind(value?: string | null): BundleKind {
+  return value === 'profile' ? 'profile' : 'rules';
 }
 
 /** 名称去重：默认规则 → 默认规则1 … 默认规则9 → 默认规则10 … */
@@ -860,6 +876,7 @@ async function enrichBundle(env: Env, row: BundleRow): Promise<SubscriptionBundl
     id: row.id,
     name: row.name,
     slug: row.slug,
+    kind: normalizeBundleKind(row.kind),
     format: normalizeBundleFormat(row.format),
     categoryIds,
     categoryNames,
@@ -889,6 +906,7 @@ export async function getSubscriptionBundle(env: Env, bundleId: string): Promise
 
 export type BundleInput = {
   name?: string;
+  kind?: BundleKind | string;
   categoryIds?: string[];
   format?: BundleFormat | string;
   tokenLinksEnabled?: boolean;
@@ -905,19 +923,21 @@ export async function createSubscriptionBundle(env: Env, input: BundleInput) {
   }
   const name = await allocateUniqueBundleName(env, input.name);
   const slug = await allocateUniqueBundleSlug(env, name);
-  const format = normalizeBundleFormat(input.format);
+  const kind = normalizeBundleKind(input.kind);
+  const format = kind === 'profile' ? 'yaml' : normalizeBundleFormat(input.format);
   const tokenAccess = input.tokenLinksEnabled !== false;
   const publicAccess = !tokenAccess && input.publicLinksEnabled === true;
   const timestamp = now();
   const bundleId = id('bun');
   await env.DB.prepare(
-    `INSERT INTO subscription_bundles (id, name, slug, format, category_ids, public_links_enabled, token_links_enabled, note, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO subscription_bundles (id, name, slug, format, kind, category_ids, public_links_enabled, token_links_enabled, note, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     bundleId,
     name,
     slug,
     format,
+    kind,
     JSON.stringify(categoryIds),
     publicAccess ? 1 : 0,
     tokenAccess ? 1 : 0,
@@ -945,7 +965,8 @@ export async function updateSubscriptionBundle(env: Env, bundleId: string, input
       if (!exists) throw new Error('所选分类不存在或已被删除。');
     }
   }
-  const format = input.format !== undefined ? normalizeBundleFormat(input.format) : normalizeBundleFormat(existing.format);
+  const kind = input.kind !== undefined ? normalizeBundleKind(input.kind) : normalizeBundleKind(existing.kind);
+  const format = kind === 'profile' ? 'yaml' : (input.format !== undefined ? normalizeBundleFormat(input.format) : normalizeBundleFormat(existing.format));
   let tokenAccess = existing.token_links_enabled !== 0;
   let publicAccess = existing.public_links_enabled === 1;
   if (input.tokenLinksEnabled !== undefined || input.publicLinksEnabled !== undefined) {
@@ -956,8 +977,8 @@ export async function updateSubscriptionBundle(env: Env, bundleId: string, input
   const slug = name !== existing.name ? await allocateUniqueBundleSlug(env, name, bundleId) : existing.slug;
   const timestamp = now();
   await env.DB.prepare(
-    `UPDATE subscription_bundles SET name = ?, slug = ?, format = ?, category_ids = ?, public_links_enabled = ?, token_links_enabled = ?, note = ?, updated_at = ? WHERE id = ?`,
-  ).bind(name, slug, format, JSON.stringify(categoryIds), publicAccess ? 1 : 0, tokenAccess ? 1 : 0, note, timestamp, bundleId).run();
+    `UPDATE subscription_bundles SET name = ?, slug = ?, format = ?, kind = ?, category_ids = ?, public_links_enabled = ?, token_links_enabled = ?, note = ?, updated_at = ? WHERE id = ?`,
+  ).bind(name, slug, format, kind, JSON.stringify(categoryIds), publicAccess ? 1 : 0, tokenAccess ? 1 : 0, note, timestamp, bundleId).run();
   return getSubscriptionBundle(env, bundleId);
 }
 

@@ -512,3 +512,32 @@
 [data-theme='dark'] .modal-backdrop {
   background: rgba(0, 0, 0, 0.55);
 }
+
+/* 订阅中心：规则集 / 订阅集 Tab */
+.subscription-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 4px;
+}
+.subscription-tabs button {
+  appearance: none;
+  border: 1px solid var(--border, #dfe7ee);
+  background: var(--panel-muted, #f3f7fa);
+  color: inherit;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.subscription-tabs button.active {
+  background: #1f9aa3;
+  border-color: #1f9aa3;
+  color: #fff;
+}
+[data-theme='dark'] .subscription-tabs button.active {
+  background: #259ca4;
+  color: #071215;
+}
+.wizard-categories {
+  max-height: 280px;
+}

@@ -1,4 +1,5 @@
 import type { ClientId, ClientLink, RuleCategory, RulesData, SubscriptionBundle } from '../types/domain-rules';
+import { profileFileName } from './clash-profile';
 import { bundleFileName, fileNameForClient } from './formatters';
 
 const clients: Array<Omit<ClientLink, 'fileName' | 'publicUrl' | 'tokenUrl' | 'recommendedUrl' | 'supported'>> = [
@@ -64,7 +65,7 @@ export function linksByCategory(data: RulesData, requestUrl: string, ruleToken?:
 
 export function linksForBundle(bundle: SubscriptionBundle, data: RulesData, requestUrl: string, ruleToken?: string): SubscriptionBundle {
   const base = siteBase(requestUrl, data);
-  const fileName = bundleFileName(bundle.slug, bundle.format);
+  const fileName = bundle.kind === 'profile' ? profileFileName(bundle.slug) : bundleFileName(bundle.slug, bundle.format);
   const publicUrl = `${base}/rules/${fileName}`;
   const tokenUrl = ruleToken ? `${base}/sub/${encodeURIComponent(ruleToken)}/${fileName}` : '';
   const tokenEnabled = bundle.tokenLinksEnabled !== false;

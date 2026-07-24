@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { BundleFormat, ClientLink, DomainRule, DomainRuleType, GeoSourceSuggestion, ImportPreview, RulesData, SubscriptionBundle } from '../../types/domain-rules';
+import type { BundleFormat, BundleKind, ClientLink, DomainRule, DomainRuleType, GeoSourceSuggestion, ImportPreview, RulesData, SubscriptionBundle } from '../../types/domain-rules';
 import { UPSTREAM_RULE_PREVIEW_LIMIT } from '../../types/domain-rules';
 
 type LinksByCategory = Record<string, ClientLink[]>;
@@ -24,6 +24,15 @@ const localDemoData: RulesData = {
   updatedAt: '2026-07-13T00:00:00.000Z',
 };
 
+type OverviewPayload = {
+  data?: RulesData;
+  links?: LinksByCategory;
+  bundles?: SubscriptionBundle[];
+  bundle?: SubscriptionBundle;
+  error?: string;
+  ok?: boolean;
+};
+
 export function useDomainAdmin() {
   const [data, setData] = useState<RulesData | null>(null);
   const [links, setLinks] = useState<LinksByCategory>({});
@@ -40,15 +49,33 @@ export function useDomainAdmin() {
   const [error, setError] = useState('');
   const [apiKeys, setApiKeys] = useState<ApiKeySummary[]>([]);
 
+  const applyOverview = useCallback((payload: OverviewPayload) => {
+    if (payload.data) setData(payload.data);
+    if (payload.links) setLinks(payload.links);
+    if (payload.bundles) setBundles(payload.bundles);
+    if (payload.bundle) {
+      setBundles((current) => {
+        const index = current.findIndex((item) => item.id === payload.bundle!.id);
+        if (index < 0) return [payload.bundle!, ...current];
+        const next = current.slice();
+        next[index] = payload.bundle!;
+        return next;
+      });
+    }
+  }, []);
+
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [response, meResponse, apiKeysResponse, bundlesResponse] = await Promise.all([
-        fetch('/api/categories'),
+      // 首屏优先等 categories；me / api-keys / bundles 并行且不阻塞主列表结束
+      const categoriesPromise = fetch('/api/categories');
+      const secondaryPromise = Promise.all([
         fetch('/api/auth/me'),
         fetch('/api/api-keys'),
         fetch('/api/bundles'),
       ]);
+
+      const response = await categoriesPromise;
       if (response.status === 401) {
         window.location.href = '/admin/login';
         return;
@@ -61,23 +88,21 @@ export function useDomainAdmin() {
         return;
       }
       if (!response.ok) throw new Error('无法加载规则数据，请检查数据库连接');
-      const payload = (await response.json()) as { data: RulesData; links: LinksByCategory };
-      setData(payload.data);
-      setLinks(payload.links);
-      if (meResponse.ok) {
-        const me = (await meResponse.json()) as typeof meta;
-        setMeta(me);
-      }
+      const payload = (await response.json()) as OverviewPayload;
+      applyOverview(payload);
+      setError('');
+      if (!silent) setLoading(false);
+
+      const [meResponse, apiKeysResponse, bundlesResponse] = await secondaryPromise;
+      if (meResponse.ok) setMeta((await meResponse.json()) as typeof meta);
       if (apiKeysResponse.ok) setApiKeys(((await apiKeysResponse.json()) as { keys?: ApiKeySummary[] }).keys ?? []);
       if (bundlesResponse.ok) setBundles(((await bundlesResponse.json()) as { bundles?: SubscriptionBundle[] }).bundles ?? []);
-      else setBundles([]);
-      setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '加载失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyOverview]);
 
   useEffect(() => {
     refresh();
@@ -89,16 +114,28 @@ export function useDomainAdmin() {
         ...options,
         headers: { 'content-type': 'application/json', ...(options.headers ?? {}) },
       });
+      const payload = (await response.json().catch(() => ({}))) as OverviewPayload;
       if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as { error?: string };
         const message = payload.error ?? '操作失败';
         setError(message);
         throw new Error(message);
       }
-      await refresh(true);
+
+      // 写操作接口已返回轻量 overview 时直接套用，避免再打 4 个全量请求
+      if (payload.data || payload.links || payload.bundle || payload.bundles) {
+        applyOverview(payload);
+      } else if (url.includes('/api/bundles/') && options.method === 'DELETE') {
+        const id = url.split('/').pop()!;
+        setBundles((current) => current.filter((item) => item.id !== id));
+      } else if (url.includes('/api/api-keys')) {
+        const keysResponse = await fetch('/api/api-keys');
+        if (keysResponse.ok) setApiKeys(((await keysResponse.json()) as { keys?: ApiKeySummary[] }).keys ?? []);
+      } else {
+        await refresh(true);
+      }
       return response;
     },
-    [refresh],
+    [applyOverview, refresh],
   );
 
   const loadRules = useCallback(async (options: { categoryId?: string; query?: string; source?: 'manual' | 'upstream' | 'url' | 'geo'; all?: boolean }, signal?: AbortSignal) => {
@@ -169,14 +206,15 @@ export function useDomainAdmin() {
       const response = await fetch('/api/api-keys', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note }) });
       const payload = (await response.json().catch(() => ({}))) as { id?: string; apiKey?: string; note?: string; keyPrefix?: string; createdAt?: string; error?: string };
       if (!response.ok || !payload.apiKey) throw new Error(payload.error ?? 'API Key 生成失败');
-      await refresh(true);
+      const keysResponse = await fetch('/api/api-keys');
+      if (keysResponse.ok) setApiKeys(((await keysResponse.json()) as { keys?: ApiKeySummary[] }).keys ?? []);
       return payload;
     },
     deleteApiKey: (keyId: string) => mutate(`/api/api-keys/${keyId}`, { method: 'DELETE' }),
     updateApiKeyNote: (keyId: string, note: string) => mutate(`/api/api-keys/${keyId}`, { method: 'PATCH', body: JSON.stringify({ note }) }),
-    createBundle: (input: { name?: string; categoryIds: string[]; format?: BundleFormat; tokenLinksEnabled?: boolean; publicLinksEnabled?: boolean; note?: string }) =>
+    createBundle: (input: { name?: string; kind?: 'rules' | 'profile'; categoryIds: string[]; format?: BundleFormat; tokenLinksEnabled?: boolean; publicLinksEnabled?: boolean; note?: string }) =>
       mutate('/api/bundles', { method: 'POST', body: JSON.stringify(input) }),
-    updateBundle: (id: string, input: { name?: string; categoryIds?: string[]; format?: BundleFormat; tokenLinksEnabled?: boolean; publicLinksEnabled?: boolean; note?: string }) =>
+    updateBundle: (id: string, input: { name?: string; kind?: 'rules' | 'profile'; categoryIds?: string[]; format?: BundleFormat; tokenLinksEnabled?: boolean; publicLinksEnabled?: boolean; note?: string }) =>
       mutate(`/api/bundles/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
     deleteBundle: (id: string) => mutate(`/api/bundles/${id}`, { method: 'DELETE' }),
   };
