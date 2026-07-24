@@ -58,6 +58,8 @@ type SourceRow = {
   geosite_name: string | null;
   geoip_name: string | null;
   rule_optimization: RuleOptimizationMode | 'balanced' | null;
+  consecutive_failures: number | null;
+  skip_auto_sync_on: string | null;
 };
 
 const defaultSettings: RuleSettings = {
@@ -152,6 +154,8 @@ export function ensureDatabase(env: Env) {
     if (!sourceNames.has('geoip_name')) alters.push('ALTER TABLE category_sources ADD COLUMN geoip_name TEXT');
     if (!sourceNames.has('rule_optimization')) alters.push("ALTER TABLE category_sources ADD COLUMN rule_optimization TEXT DEFAULT 'none'");
     if (!sourceNames.has('last_original_count')) alters.push('ALTER TABLE category_sources ADD COLUMN last_original_count INTEGER DEFAULT 0');
+    if (!sourceNames.has('consecutive_failures')) alters.push('ALTER TABLE category_sources ADD COLUMN consecutive_failures INTEGER DEFAULT 0');
+    if (!sourceNames.has('skip_auto_sync_on')) alters.push('ALTER TABLE category_sources ADD COLUMN skip_auto_sync_on TEXT');
     try {
       const bundleColumns = await env.DB.prepare('PRAGMA table_info(subscription_bundles)').all<{ name: string }>();
       const bundleNames = new Set((bundleColumns.results ?? []).map((column) => column.name));
@@ -207,6 +211,7 @@ async function reconcileD1MigrationRecords(env: Env) {
     '0010_github_mirror_setting.sql',
     '0011_subscription_bundles.sql',
     '0012_bundle_kind.sql',
+    '0013_source_failure_backoff.sql',
   ];
 
   try {
@@ -245,6 +250,8 @@ async function reconcileD1MigrationRecords(env: Env) {
           return tableNames.has('subscription_bundles');
         case '0012_bundle_kind.sql':
           return tableNames.has('subscription_bundles');
+        case '0013_source_failure_backoff.sql':
+          return tableNames.has('category_sources');
         default:
           return false;
       }
@@ -271,7 +278,7 @@ function sourceFromRow(row: SourceRow): RuleSource {
   const name = (row.source_type ?? 'url') === 'url' ? sourceNameFromUrl(row.url, row.name) : row.name;
   return { id: row.id, categoryId: row.category_id, name, url: row.url, enabled: row.enabled !== 0,
     lastSyncedAt: row.last_synced_at ?? undefined, lastStatus: row.last_status ?? 'pending',
-    lastCount: row.last_count ?? 0, lastOriginalCount: row.last_original_count ?? row.last_count ?? 0, lastError: row.last_error ?? undefined, syncIntervalMinutes: row.sync_interval_minutes ?? 60,
+    lastCount: row.last_count ?? 0, lastOriginalCount: row.last_original_count ?? row.last_count ?? 0, lastError: row.last_error ?? undefined, consecutiveFailures: row.consecutive_failures ?? 0, skipAutoSyncOn: row.skip_auto_sync_on ?? undefined, syncIntervalMinutes: row.sync_interval_minutes ?? 60,
     userAgent: row.user_agent ?? 'clash-verge/v2.5.1',
     sourceType: row.source_type ?? 'url', geositeName: row.geosite_name ?? undefined, geoipName: row.geoip_name ?? undefined,
     ruleOptimization: row.rule_optimization === 'balanced' ? 'aggressive' : row.rule_optimization ?? 'none' };

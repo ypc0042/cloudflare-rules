@@ -41,6 +41,10 @@ export type RuleSource = {
   lastCount?: number;
   lastOriginalCount?: number;
   lastError?: string;
+  /** 连续拉取失败次数；成功归零 */
+  consecutiveFailures?: number;
+  /** 当日自动同步已放弃（YYYY-MM-DD），次日清空重试 */
+  skipAutoSyncOn?: string;
   syncIntervalMinutes: number;
   userAgent?: string;
   sourceType?: 'url' | 'geosite' | 'geoip';

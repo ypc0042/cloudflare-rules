@@ -106,6 +106,8 @@ function migrationSatisfied(name, tables, categoryCols, ruleCols, sourceCols) {
       return tables.has('subscription_bundles');
     case '0012_bundle_kind.sql':
       return tables.has('subscription_bundles');
+    case '0013_source_failure_backoff.sql':
+      return sourceCols.has('consecutive_failures') && sourceCols.has('skip_auto_sync_on');
     default:
       return false;
   }
