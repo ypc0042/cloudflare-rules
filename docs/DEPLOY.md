@@ -1,3 +1,8 @@
+## Schema 与迁移
+
+- **日常 / Fork**：绑定 D1 并部署后访问后台即可，`ensureDatabase` 幂等建表。
+- **可选**：`pnpm db:migrate:remote` 对齐 wrangler `d1_migrations` 账本。
+
 # Cloudflare Rules — 部署说明与踩坑记录
 
 本文记录本项目从「Cloudflare-only 二改」到「成功上线」过程中遇到的真实问题与正确做法。  

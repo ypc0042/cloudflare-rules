@@ -48,6 +48,39 @@ function providerKey(slug: string) {
   return slug.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'rules';
 }
 
+/** 按分类名/slug 给策略组加 emoji 前缀（已有 emoji 则不重复加） */
+function groupLabel(category: RuleCategory) {
+  const raw = (category.name || category.slug || '规则').trim();
+  if (/^\p{Extended_Pictographic}/u.test(raw)) return raw;
+  const key = `${category.slug} ${category.name}`.toLowerCase();
+  const rules: Array<[RegExp, string]> = [
+    [/github|\bgh\b/, '🐙'],
+    [/youtube|ytb|googlevideo/, '▶️'],
+    [/netflix|nflx/, '🎬'],
+    [/telegram|\btg\b/, '✈️'],
+    [/openai|chatgpt|claude|gemini|\bai\b/, '🤖'],
+    [/google|gmail|gstatic/, '🇬'],
+    [/apple|icloud|app.?store/, '🍎'],
+    [/microsoft|xbox|office|onedrive/, 'Ⓜ️'],
+    [/steam|epic|game|playstation|nintendo/, '🎮'],
+    [/twitter|\bx\.com\b/, '𝕏'],
+    [/facebook|instagram|meta/, '📘'],
+    [/tiktok|douyin/, '🎵'],
+    [/spotify|music/, '🎧'],
+    [/discord/, '💬'],
+    [/cloudflare|\bcf\b/, '☁️'],
+    [/bili|bilibili/, '📺'],
+    [/\bcn\b|china|国内|直连/, '🇨🇳'],
+    [/ads?$|adblock|reject|广告/, '🚫'],
+    [/proxy|代理|gfw/, '🚀'],
+  ];
+  for (const [re, emoji] of rules) {
+    if (re.test(key)) return `${emoji} ${raw}`;
+  }
+  return `📁 ${raw}`;
+}
+
+
 /**
  * 生成完整 Clash / Mihomo 配置模板。
  * - 不含机场节点列表；proxy-providers 预留填写位置
@@ -170,9 +203,9 @@ export function buildClashProfileYaml(options: {
     );
   }
 
-  // 按规则分类（组名与 rules 第三段必须完全一致且无多余引号）
+  // 按规则分类（组名与 rules 第三段一致；带 emoji）
   for (const category of selected) {
-    const groupName = category.name.trim() || category.slug;
+    const groupName = groupLabel(category);
     lines.push(`  - name: ${yamlScalar(groupName)}`, '    type: select', '    proxies:');
     for (const item of commonSelect) {
       lines.push(`      - ${yamlScalar(item)}`);
@@ -197,7 +230,7 @@ export function buildClashProfileYaml(options: {
   lines.push('', 'rules:');
   for (const category of selected) {
     const key = providerKey(category.slug);
-    const groupName = ruleGroupRef(category.name.trim() || category.slug);
+    const groupName = ruleGroupRef(groupLabel(category));
     lines.push(`  - RULE-SET,${key},${groupName}`);
   }
   lines.push('  - MATCH,🐟 漏网之鱼', '');

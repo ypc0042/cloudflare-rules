@@ -302,6 +302,12 @@ https://你的域名/api/auth/me
 
 ## 第六步：数据库迁移（建表）
 
+
+> **Fork / 首次部署（推荐，无需本机执行迁移）**  
+> Worker 首次请求会运行 `ensureDatabase`，自动创建/补齐表结构。  
+> 只需：创建并绑定 D1（`DB`）→ 配置 Secrets → 部署后打开一次 `/admin`。  
+> 本机 `pnpm db:migrate:remote` **可选**（对齐官方迁移账本、排错用）。
+
 部署成功 **不会自动建表**。需要在本机对远程 D1 执行 `migrations/` 下的 SQL。
 
 ### 6.1 环境

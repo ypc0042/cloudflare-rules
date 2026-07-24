@@ -41,6 +41,8 @@ export type SyncResult = {
 const staleSourceError = '来源已删除或所属分类已变更，已取消同步';
 /** 自动同步：连续失败达到此次数后，当日不再自动重试 */
 const AUTO_FAIL_LIMIT = 3;
+/** 自动同步：单次失败后至少间隔 1 小时再拉 */
+const FAIL_RETRY_MS = 60 * 60 * 1000;
 
 const staleSourceResult = (source: SourceRecord, syncedAt: string): SyncResult => ({
   sourceId: source.id,
@@ -224,6 +226,11 @@ export async function syncRuleSources(env: Env, categoryId?: string, force = tru
       // 自动同步：当日已因连续失败放弃则跳过
       if (source.skip_auto_sync_on === today) continue;
       if (!isSourceDue(source, false, nowMs)) continue;
+      // 失败后至少等 1 小时再自动重试
+      if ((source.consecutive_failures ?? 0) > 0 && source.last_synced_at) {
+        const lastAt = Date.parse(source.last_synced_at);
+        if (Number.isFinite(lastAt) && nowMs - lastAt < FAIL_RETRY_MS) continue;
+      }
     }
 
     results.push(await syncSource(env, source, githubMirrorUrl, force));
