@@ -25,8 +25,23 @@ function siteBase(data: RulesData, requestUrl: string) {
   }
 }
 
-function yamlQuote(value: string) {
+/** YAML 标量：仅在必要时加双引号（用于 name/url/filter 等字段） */
+function yamlScalar(value: string) {
+  if (value === '') return '""';
+  // 纯标识符/含 emoji 但无特殊 YAML 字符时可不加引号；空格、冒号等需引用
+  if (/^[\w.\-/-￿]+$/u.test(value) && !/^true|false|null|yes|no$/i.test(value)) {
+    return value;
+  }
   return JSON.stringify(value);
+}
+
+/**
+ * Clash rules 行第三段是策略组名：绝不能带 JSON 双引号。
+ * 错误示例：RULE-SET,netflix,"netflix" → 会去找名为 `"netflix"` 的组
+ * 正确示例：RULE-SET,netflix,netflix
+ */
+function ruleGroupRef(name: string) {
+  return name.replace(/,/g, '');
 }
 
 function providerKey(slug: string) {
@@ -97,7 +112,7 @@ export function buildClashProfileYaml(options: {
     lines.push(
       `  ${key}:`,
       '    type: http',
-      `    url: ${yamlQuote(url)}`,
+      `    url: ${yamlScalar(url)}`,
       '    interval: 3600',
       `    path: ./providers/rules-${key}.yaml`,
       '    behavior: classical',
@@ -148,19 +163,19 @@ export function buildClashProfileYaml(options: {
       '    include-all: true',
       '    include-all-proxies: true',
       '    include-all-providers: true',
-      `    filter: ${yamlQuote(region.filter)}`,
+      `    filter: ${yamlScalar(region.filter)}`,
       '    proxies:',
       '      - DIRECT',
       '      - REJECT',
     );
   }
 
-  // 按规则分类
+  // 按规则分类（组名与 rules 第三段必须完全一致且无多余引号）
   for (const category of selected) {
-    const groupName = category.name;
-    lines.push(`  - name: ${yamlQuote(groupName)}`, '    type: select', '    proxies:');
+    const groupName = category.name.trim() || category.slug;
+    lines.push(`  - name: ${yamlScalar(groupName)}`, '    type: select', '    proxies:');
     for (const item of commonSelect) {
-      lines.push(`      - ${item.includes(' ') || /[^\x00-\x7F]/.test(item) ? yamlQuote(item) : item}`);
+      lines.push(`      - ${yamlScalar(item)}`);
     }
   }
 
@@ -182,7 +197,8 @@ export function buildClashProfileYaml(options: {
   lines.push('', 'rules:');
   for (const category of selected) {
     const key = providerKey(category.slug);
-    lines.push(`  - RULE-SET,${key},${yamlQuote(category.name)}`);
+    const groupName = ruleGroupRef(category.name.trim() || category.slug);
+    lines.push(`  - RULE-SET,${key},${groupName}`);
   }
   lines.push('  - MATCH,🐟 漏网之鱼', '');
 
