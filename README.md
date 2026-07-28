@@ -293,6 +293,8 @@ https://你的域名/admin/login
 - 手动选择 / 自动选择仍为 include-all，便于手选任意节点。
 - **漏网之鱼** 可选：手动、自动、全部地区组、其他地区、DIRECT/REJECT。
 - 自动选择 / 健康检查默认测速 URL：`https://www.gstatic.com/generate_204`（可在客户端再改）。
+- 模板含 **🚀 测速工具** 组，并将 generate_204 / connectivity 等测速域名优先分流到该组（默认可走 DIRECT），减轻「美国节点测速全超时」的误报。
+- 自动选择使用 `lazy` + `timeout: 5000` + `expected-status: 204`（Mihomo）；客户端批量测延迟仍可在设置里加大超时。
 
 ### 上游同步（自动）
 
