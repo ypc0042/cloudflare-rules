@@ -284,7 +284,7 @@ export function buildClashProfileYaml(options: {
     '    path: ./providers/airport.yaml',
     '    health-check:',
     '      enable: true',
-    '      url: https://cp.cloudflare.com/generate_204',
+    '      url: https://www.gstatic.com/generate_204',
     '      interval: 600',
     '',
     '# ========== 规则提供者（引用本站规则集）==========',
@@ -335,7 +335,8 @@ export function buildClashProfileYaml(options: {
     '    include-all: true',
     '    include-all-proxies: true',
     '    include-all-providers: true',
-    '    url: https://cp.cloudflare.com/generate_204',
+    // gstatic 在部分网络下比 cp.cloudflare.com 更稳，减少误报超时
+    '    url: https://www.gstatic.com/generate_204',
     '    interval: 300',
     '    tolerance: 50',
     '    proxies:',
@@ -391,14 +392,13 @@ export function buildClashProfileYaml(options: {
     '    proxies:',
     '      - DIRECT',
     '      - REJECT',
-    '  - name: 🐟 漏网之鱼',
-    '    type: select',
-    '    proxies:',
-    '      - 🚀 手动选择',
-    '      - ♻️ 自动选择',
-    '      - DIRECT',
-    '      - REJECT',
   );
+
+  // 漏网之鱼：与业务策略组相同，可选手动/自动/全部地区/其他地区
+  lines.push('  - name: 🐟 漏网之鱼', '    type: select', '    proxies:');
+  for (const item of commonSelect) {
+    lines.push(`      - ${yamlScalar(item)}`);
+  }
 
   lines.push('', 'rules:');
   for (const category of selected) {
