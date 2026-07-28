@@ -20,6 +20,13 @@ describe('clash region assignment', () => {
     expect(assignRegion('USA-LAX-1')).toBe('🇺🇸 美国');
   });
 
+  it('matches jp02 / us-id style airport names (not 其他地区)', () => {
+    expect(assignRegion('nb-jp02-panda')).toBe('🇯🇵 日本');
+    expect(assignRegion('dmit-us-id4262')).toBe('🇺🇸 美国');
+    expect(assignRegion('jp02')).toBe('🇯🇵 日本');
+    expect(assignRegion('node-us01')).toBe('🇺🇸 美国');
+  });
+
   it('sends unrecognized names to 其他地区', () => {
     expect(assignRegion('random-node-99')).toBe(OTHER_REGION_NAME);
     expect(assignRegion('voll-xx-id999')).toBe(OTHER_REGION_NAME);
@@ -29,6 +36,8 @@ describe('clash region assignment', () => {
   it('does not let bare us match inside plus', () => {
     expect(keywordMatches('plus-node-1', 'us')).toBe(false);
     expect(keywordMatches('us-west-1', 'us')).toBe(true);
+    expect(keywordMatches('dmit-us-id4262', 'us')).toBe(true);
+    expect(keywordMatches('nb-jp02-panda', 'jp')).toBe(true);
   });
 
   it('buildFilterPattern is non-empty and case-insensitive flag present', () => {

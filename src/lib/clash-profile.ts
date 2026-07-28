@@ -49,7 +49,8 @@ export const REGION_DEFS: RegionDef[] = [
     id: 'us',
     name: '🇺🇸 美国',
     priority: 6,
-    keywords: ['usa', 'unitedstates', 'united states', 'america', 'american', '美', '美国', '美國', '洛杉矶', '矽谷', '硅谷', 'seattle', 'chicago', 'miami', 'dallas', 'lasvegas', 'sanjose', 'sfo', 'lax', 'nyc', 'newyork', 'new york'],
+    // us 用边界匹配：us- / -us- / us02 可中；plus 不会中
+    keywords: ['us', 'usa', 'unitedstates', 'united states', 'america', 'american', '美', '美国', '美國', '洛杉矶', '矽谷', '硅谷', 'seattle', 'chicago', 'miami', 'dallas', 'lasvegas', 'sanjose', 'sfo', 'lax', 'nyc', 'newyork', 'new york'],
   },
   {
     id: 'hk',
@@ -107,7 +108,12 @@ function escapeRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** 短英文码用边界，降低 us/sg 等误伤；中文直接包含匹配 */
+/**
+ * 短英文地区码匹配：
+ * - 允许 jp02、us-id、nb-jp02（码后接数字或分隔符）
+ * - 不允许 plus 里的 us、script 里的 sg 等「嵌在单词里」
+ * 规则：左侧为开头或非字母数字；右侧为结尾、非字母、或数字（jp02）
+ */
 export function keywordMatches(nodeName: string, keyword: string): boolean {
   const name = nodeName.trim();
   if (!name || !keyword) return false;
@@ -115,14 +121,14 @@ export function keywordMatches(nodeName: string, keyword: string): boolean {
     return name.includes(keyword);
   }
   const k = keyword.toLowerCase();
-  const n = name.toLowerCase();
   // 多词（united states）
   if (k.includes(' ')) {
-    return n.includes(k);
+    return name.toLowerCase().includes(k);
   }
-  // 短码（<=3）强制边界，避免 kr 误伤、也避免 us 命中 plus
+  const e = escapeRegex(k);
   if (k.length <= 3) {
-    return new RegExp(`(^|[^a-z0-9])${escapeRegex(k)}([^a-z0-9]|$)`, 'i').test(name);
+    // (^|[^a-z0-9]) code ([^a-z]|[0-9]|$)  → jp02、us-1、kr 均可；plus 中 us 不行
+    return new RegExp(`(^|[^a-z0-9])${e}([^a-z]|[0-9]|$)`, 'i').test(name);
   }
   return new RegExp(escapeRegex(k), 'i').test(name);
 }
@@ -145,11 +151,12 @@ export function buildFilterPattern(keywords: string[]): string {
     if (/[一-鿿㐀-䶿]/.test(kw)) return escapeRegex(kw);
     const e = escapeRegex(kw);
     if (kw.length <= 3 && !kw.includes(' ')) {
-      return `(^|[^A-Za-z0-9])${e}([^A-Za-z0-9]|$)`;
+      // 与 keywordMatches 一致：码后允许数字（jp02 / us01）
+      return `(^|[^A-Za-z0-9])${e}([^A-Za-z]|[0-9]|$)`;
     }
     return e;
   });
-  if (!parts.length) return '(?!)'; // 永不匹配
+  if (!parts.length) return '(?!)';
   return `(?i)(${parts.join('|')})`;
 }
 
@@ -249,10 +256,10 @@ export function buildClashProfileYaml(options: {
     `# Cloudflare Rules · 订阅集「${bundle.name}」`,
     `# 完整 Clash / Mihomo 配置模板（不含节点列表）`,
     `# - 在下方 proxy-providers 的 url 中填入机场订阅（可选）`,
+    `# - 若更新订阅失败：可在客户端开启「通过代理更新订阅」/ 换可访问的机场 URL；模板本身不含节点端口`,
     `# - 地区分组只看节点【名称】：关键词 + 优先级，一节点只进一个地区组`,
-    `# - 名称无法识别地区 → 进入「${OTHER_REGION_NAME}」`,
-    `# - 韩国优先于香港，故 voll-kr-* 进韩国而非香港`,
-    `# - 需要 exclude-filter：请使用 Mihomo / Clash Meta / Verge Rev`,
+    `# - 支持 jp02、us-id 等「地区码+数字」命名；无法识别 → 「${OTHER_REGION_NAME}」`,
+    `# - 韩国优先于香港；需要 exclude-filter（Mihomo / Clash Meta / Verge Rev）`,
     '',
     'mixed-port: 7890',
     'allow-lan: false',
