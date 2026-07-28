@@ -233,12 +233,16 @@ function groupLabel(category: RuleCategory) {
   return `📁 ${raw}`;
 }
 
+
 /**
  * 生成完整 Clash / Mihomo 配置模板。
- * - 不含机场节点列表；proxy-providers 预留填写位置
- * - 内置 DIRECT / REJECT
- * - 地区组：按节点名关键词 + 优先级互斥（filter + exclude-filter）；认不出 → 🌐 其他地区
- * - 推荐 Mihomo / Clash Meta / Verge（需支持 exclude-filter）
+ *
+ * 架构（对齐可用完整模板的「壳」）：
+ * 1) 基础：mode / dns（含 proxy-server-nameserver）/ port
+ * 2) 系统组：手动、自动、地区（本站词表+互斥）、其他地区、直连、漏网
+ * 3) 业务组：仅由订阅集勾选的规则分类动态生成（不内置 GitHub/苹果等写死组）
+ * 4) 规则：极简基础直连 + 各分类 RULE-SET + MATCH
+ * 5) 不生成机场节点列表；proxy-providers 预留 url
  */
 export function buildClashProfileYaml(options: {
   bundle: SubscriptionBundle;
@@ -254,35 +258,36 @@ export function buildClashProfileYaml(options: {
 
   const lines: string[] = [
     `# Cloudflare Rules · 订阅集「${bundle.name}」`,
-    `# 完整 Clash / Mihomo 配置模板（不含节点列表）`,
-    `# - 在下方 proxy-providers 的 url 中填入机场订阅（可选）`,
-    `# - 若更新订阅失败：可在客户端开启「通过代理更新订阅」/ 换可访问的机场 URL；模板本身不含节点端口`,
-    `# - 地区分组只看节点【名称】：关键词 + 优先级，一节点只进一个地区组`,
-    `# - 支持 jp02、us-id 等「地区码+数字」命名；无法识别 → 「${OTHER_REGION_NAME}」`,
-    `# - 韩国优先于香港；需要 exclude-filter（Mihomo / Clash Meta / Verge Rev）`,
+    `# 完整配置骨架：DNS/结构对齐可用模板；业务策略组仅来自勾选规则`,
+    `# - 节点：proxy-providers.机场订阅.url 自填，或客户端合并导入`,
+    `# - 地区：节点名关键词+优先级，一节点一地区；认不出 → ${OTHER_REGION_NAME}`,
+    `# - 需要 exclude-filter：Mihomo / Clash Meta / Verge Rev`,
     '',
     'mixed-port: 7890',
     'allow-lan: false',
     'mode: rule',
     'log-level: info',
-    // 与可正常测美线的完整模板一致：关闭 IPv6，避免部分环境双栈拖垮测速
     'ipv6: false',
     'external-controller: 127.0.0.1:9090',
     '',
-    // DNS：必须把「节点服务器域名」用直连 DNS 解析（proxy-server-nameserver）
-    // 参考可用订阅；缺此项时 dmit.kytx.top 等解析异常，客户端测延迟会大面积 timeout
     'dns:',
     '  enable: true',
+    '  ipv6: false',
     '  enhanced-mode: fake-ip',
     '  fake-ip-range: 198.18.0.1/16',
     '  fake-ip-filter:',
     '    - +.lan',
     '    - +.local',
+    '    - +.localhost',
     '    - geosite:cn',
     '  default-nameserver:',
     '    - 223.5.5.5',
     '    - 119.29.29.29',
     '  nameserver:',
+    '    - https://dns.alidns.com/dns-query',
+    '    - https://doh.pub/dns-query',
+    '    - tls://8.8.8.8',
+    '  direct-nameserver:',
     '    - https://dns.alidns.com/dns-query',
     '    - https://doh.pub/dns-query',
     '  proxy-server-nameserver:',
@@ -292,8 +297,8 @@ export function buildClashProfileYaml(options: {
     '    "geosite:cn":',
     '      - https://dns.alidns.com/dns-query',
     '      - https://doh.pub/dns-query',
+    '      - 223.5.5.5',
     '',
-    '# ========== 机场订阅（可选：把 url 改成你的订阅地址）==========',
     'proxy-providers:',
     '  机场订阅:',
     '    type: http',
@@ -305,7 +310,6 @@ export function buildClashProfileYaml(options: {
     '      url: https://cp.cloudflare.com/generate_204',
     '      interval: 600',
     '',
-    '# ========== 规则提供者（引用本站规则集）==========',
     'rule-providers:',
   ];
 
@@ -347,8 +351,6 @@ export function buildClashProfileYaml(options: {
     '      - REJECT',
   );
 
-  // 自动选择：与可用参考模板一致（cp.cloudflare.com/generate_204 + interval/tolerance）
-  // 不使用「测速工具」组；测延迟由客户端对节点直测该 URL
   lines.push(
     '  - name: ♻️ 自动选择',
     '    type: url-test',
@@ -362,7 +364,6 @@ export function buildClashProfileYaml(options: {
     '      - DIRECT',
   );
 
-  // 地区组：filter = 本区；exclude-filter = 更高优先级区关键词 → 一节点一地区
   for (const region of regionsSorted) {
     const filter = buildFilterPattern(region.keywords);
     const higher = keywordsOfPriorityLessThan(region.priority);
@@ -377,14 +378,9 @@ export function buildClashProfileYaml(options: {
     if (higher.length) {
       lines.push(`    exclude-filter: ${yamlScalar(buildFilterPattern(higher))}`);
     }
-    lines.push(
-      '    proxies:',
-      '      - DIRECT',
-      '      - REJECT',
-    );
+    lines.push('    proxies:', '      - DIRECT', '      - REJECT');
   }
 
-  // 其他地区：排除所有已知地区关键词
   lines.push(
     `  - name: ${OTHER_REGION_NAME}`,
     '    type: select',
@@ -392,6 +388,14 @@ export function buildClashProfileYaml(options: {
     '    include-all-proxies: true',
     '    include-all-providers: true',
     `    exclude-filter: ${yamlScalar(buildFilterPattern(allRegionKeywords()))}`,
+    '    proxies:',
+    '      - DIRECT',
+    '      - REJECT',
+  );
+
+  lines.push(
+    '  - name: 🎯 全球直连',
+    '    type: select',
     '    proxies:',
     '      - DIRECT',
     '      - REJECT',
@@ -405,21 +409,18 @@ export function buildClashProfileYaml(options: {
     }
   }
 
-  lines.push(
-    '  - name: 🎯 全球直连',
-    '    type: select',
-    '    proxies:',
-    '      - DIRECT',
-    '      - REJECT',
-  );
-
-  // 漏网之鱼：与业务策略组相同，可选手动/自动/全部地区/其他地区
   lines.push('  - name: 🐟 漏网之鱼', '    type: select', '    proxies:');
   for (const item of commonSelect) {
     lines.push(`      - ${yamlScalar(item)}`);
   }
 
   lines.push('', 'rules:');
+  lines.push(
+    '  - GEOSITE,private,🎯 全球直连',
+    '  - GEOIP,private,🎯 全球直连,no-resolve',
+    '  - GEOSITE,cn,🎯 全球直连',
+    '  - GEOIP,cn,🎯 全球直连,no-resolve',
+  );
   for (const category of selected) {
     const key = providerKey(category.slug);
     const groupName = ruleGroupRef(groupLabel(category));
