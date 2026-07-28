@@ -1,16 +1,165 @@
 import type { RuleCategory, RulesData, SubscriptionBundle } from '../types/domain-rules';
 import { fileNameForClient } from './formatters';
 
-const REGION_GROUPS: Array<{ name: string; filter: string }> = [
-  { name: '🇭🇰 香港', filter: '港|HK|Hong|hongkong|HongKong' },
-  { name: '🇹🇼 台湾', filter: '台|TW|Taiwan|taiwan' },
-  { name: '🇯🇵 日本', filter: '日|JP|Japan|tokyo|osaka' },
-  { name: '🇸🇬 新加坡', filter: '新|SG|Singapore|singapore' },
-  { name: '🇺🇸 美国', filter: '美|US|USA|United States|america' },
-  { name: '🇰🇷 韩国', filter: '韩|KR|Korea|seoul' },
-  { name: '🇬🇧 英国', filter: '英|UK|London|britain' },
-  { name: '🇩🇪 德国', filter: '德|DE|Germany|frankfurt' },
+/** 地区定义：priority 越小越优先（落地码优先于常见中转「港」） */
+export type RegionDef = {
+  id: string;
+  name: string;
+  priority: number;
+  keywords: string[];
+};
+
+/**
+ * 关键词尽量「能认出 + 少串组」：
+ * - 短英文码用边界匹配（在 assignRegion / 生成 filter 时处理）
+ * - 韩国优先于香港，保证 voll-kr-* 进韩国而非香港
+ */
+export const REGION_DEFS: RegionDef[] = [
+  {
+    id: 'kr',
+    name: '🇰🇷 韩国',
+    priority: 1,
+    keywords: ['kr', 'korea', 'korean', '韩', '韩国', '韓', '首尔', 'ソウル', 'seoul', '釜山', 'busan', '仁川', 'incheon'],
+  },
+  {
+    id: 'jp',
+    name: '🇯🇵 日本',
+    priority: 2,
+    keywords: ['jp', 'japan', 'japanese', '日', '日本', '东京', '東京', 'tokyo', 'osaka', '大阪', '名古屋', 'nagoya', '埼玉', '神户', 'kobe'],
+  },
+  {
+    id: 'sg',
+    name: '🇸🇬 新加坡',
+    priority: 3,
+    keywords: ['sg', 'singapore', '新加坡', '狮城', '獅城', 'sing', 'sgp'],
+  },
+  {
+    id: 'my',
+    name: '🇲🇾 马来西亚',
+    priority: 4,
+    keywords: ['my', 'malaysia', '马来', '马来西亚', '馬來', '馬來西亞', '吉隆坡', 'kuala', 'lumpur', 'kl-', '-kl-', '柔佛', '槟城'],
+  },
+  {
+    id: 'tw',
+    name: '🇹🇼 台湾',
+    priority: 5,
+    keywords: ['tw', 'taiwan', '台', '台湾', '台灣', '台北', 'taipei', '高雄', 'kaohsiung', '台中', '台南'],
+  },
+  {
+    id: 'us',
+    name: '🇺🇸 美国',
+    priority: 6,
+    keywords: ['usa', 'unitedstates', 'united states', 'america', 'american', '美', '美国', '美國', '洛杉矶', '矽谷', '硅谷', 'seattle', 'chicago', 'miami', 'dallas', 'lasvegas', 'sanjose', 'sfo', 'lax', 'nyc', 'newyork', 'new york'],
+  },
+  {
+    id: 'hk',
+    name: '🇭🇰 香港',
+    priority: 7,
+    keywords: ['hk', 'hongkong', 'hong kong', '港', '香港', 'hkp', 'hkt', '深港'],
+  },
+  {
+    id: 'gb',
+    name: '🇬🇧 英国',
+    priority: 8,
+    keywords: ['uk', 'gb', 'britain', 'british', 'england', 'london', '英', '英国', '英國', '伦敦', '倫敦'],
+  },
+  {
+    id: 'de',
+    name: '🇩🇪 德国',
+    priority: 9,
+    keywords: ['de', 'germany', 'german', 'frankfurt', 'berlin', '德', '德国', '德國', '法兰克福', '柏林'],
+  },
+  {
+    id: 'fr',
+    name: '🇫🇷 法国',
+    priority: 10,
+    keywords: ['fr', 'france', 'french', 'paris', '法', '法国', '法國', '巴黎'],
+  },
+  {
+    id: 'tr',
+    name: '🇹🇷 土耳其',
+    priority: 11,
+    keywords: ['tr', 'turkey', 'türkiye', 'istanbul', '土', '土耳其', '伊斯坦布尔'],
+  },
+  {
+    id: 'in',
+    name: '🇮🇳 印度',
+    priority: 12,
+    keywords: ['india', 'indian', 'mumbai', 'delhi', '印', '印度', '孟买'],
+  },
+  {
+    id: 'ca',
+    name: '🇨🇦 加拿大',
+    priority: 13,
+    keywords: ['ca', 'canada', 'canadian', 'toronto', 'vancouver', '加', '加拿大', '温哥华', '多伦多'],
+  },
+  {
+    id: 'au',
+    name: '🇦🇺 澳大利亚',
+    priority: 14,
+    keywords: ['au', 'australia', 'australian', 'sydney', 'melbourne', '澳', '澳大利亚', '澳洲', '悉尼', '墨尔本'],
+  },
 ];
+
+export const OTHER_REGION_NAME = '🌐 其他地区';
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 短英文码用边界，降低 us/sg 等误伤；中文直接包含匹配 */
+export function keywordMatches(nodeName: string, keyword: string): boolean {
+  const name = nodeName.trim();
+  if (!name || !keyword) return false;
+  if (/[一-鿿㐀-䶿]/.test(keyword)) {
+    return name.includes(keyword);
+  }
+  const k = keyword.toLowerCase();
+  const n = name.toLowerCase();
+  // 多词（united states）
+  if (k.includes(' ')) {
+    return n.includes(k);
+  }
+  // 短码（<=3）强制边界，避免 kr 误伤、也避免 us 命中 plus
+  if (k.length <= 3) {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegex(k)}([^a-z0-9]|$)`, 'i').test(name);
+  }
+  return new RegExp(escapeRegex(k), 'i').test(name);
+}
+
+/** 按优先级返回唯一地区组名；认不出 → 其他地区 */
+export function assignRegion(nodeName: string): string {
+  const sorted = [...REGION_DEFS].sort((a, b) => a.priority - b.priority);
+  for (const region of sorted) {
+    if (region.keywords.some((kw) => keywordMatches(nodeName, kw))) {
+      return region.name;
+    }
+  }
+  return OTHER_REGION_NAME;
+}
+
+/** 生成 Mihomo 可用的 (?i) 过滤正则（用于 filter / exclude-filter） */
+export function buildFilterPattern(keywords: string[]): string {
+  const unique = [...new Set(keywords.map((k) => k.trim()).filter(Boolean))];
+  const parts = unique.map((kw) => {
+    if (/[一-鿿㐀-䶿]/.test(kw)) return escapeRegex(kw);
+    const e = escapeRegex(kw);
+    if (kw.length <= 3 && !kw.includes(' ')) {
+      return `(^|[^A-Za-z0-9])${e}([^A-Za-z0-9]|$)`;
+    }
+    return e;
+  });
+  if (!parts.length) return '(?!)'; // 永不匹配
+  return `(?i)(${parts.join('|')})`;
+}
+
+function keywordsOfPriorityLessThan(priority: number): string[] {
+  return REGION_DEFS.filter((r) => r.priority < priority).flatMap((r) => r.keywords);
+}
+
+function allRegionKeywords(): string[] {
+  return REGION_DEFS.flatMap((r) => r.keywords);
+}
 
 function siteBase(data: RulesData, requestUrl: string) {
   const request = new URL(requestUrl);
@@ -25,10 +174,9 @@ function siteBase(data: RulesData, requestUrl: string) {
   }
 }
 
-/** YAML 标量：仅在必要时加双引号（用于 name/url/filter 等字段） */
+/** YAML 标量：仅在必要时加双引号 */
 function yamlScalar(value: string) {
   if (value === '') return '""';
-  // 纯标识符/含 emoji 但无特殊 YAML 字符时可不加引号；空格、冒号等需引用
   if (/^[\w.\-/-￿]+$/u.test(value) && !/^true|false|null|yes|no$/i.test(value)) {
     return value;
   }
@@ -37,8 +185,6 @@ function yamlScalar(value: string) {
 
 /**
  * Clash rules 行第三段是策略组名：绝不能带 JSON 双引号。
- * 错误示例：RULE-SET,netflix,"netflix" → 会去找名为 `"netflix"` 的组
- * 正确示例：RULE-SET,netflix,netflix
  */
 function ruleGroupRef(name: string) {
   return name.replace(/,/g, '');
@@ -80,12 +226,12 @@ function groupLabel(category: RuleCategory) {
   return `📁 ${raw}`;
 }
 
-
 /**
  * 生成完整 Clash / Mihomo 配置模板。
  * - 不含机场节点列表；proxy-providers 预留填写位置
- * - 内置仅逻辑上使用 DIRECT / REJECT
- * - 地区组靠 filter + include-all，导入节点后自动归类
+ * - 内置 DIRECT / REJECT
+ * - 地区组：按节点名关键词 + 优先级互斥（filter + exclude-filter）；认不出 → 🌐 其他地区
+ * - 推荐 Mihomo / Clash Meta / Verge（需支持 exclude-filter）
  */
 export function buildClashProfileYaml(options: {
   bundle: SubscriptionBundle;
@@ -103,8 +249,10 @@ export function buildClashProfileYaml(options: {
     `# Cloudflare Rules · 订阅集「${bundle.name}」`,
     `# 完整 Clash / Mihomo 配置模板（不含节点列表）`,
     `# - 在下方 proxy-providers 的 url 中填入机场订阅（可选）`,
-    `# - 也可在客户端另行导入节点；地区组将按节点名 filter 自动归类`,
-    `# - 内置策略仅引用 DIRECT / REJECT`,
+    `# - 地区分组只看节点【名称】：关键词 + 优先级，一节点只进一个地区组`,
+    `# - 名称无法识别地区 → 进入「${OTHER_REGION_NAME}」`,
+    `# - 韩国优先于香港，故 voll-kr-* 进韩国而非香港`,
+    `# - 需要 exclude-filter：请使用 Mihomo / Clash Meta / Verge Rev`,
     '',
     'mixed-port: 7890',
     'allow-lan: false',
@@ -156,12 +304,12 @@ export function buildClashProfileYaml(options: {
     lines.push('  {}');
   }
 
-  const regionNames = REGION_GROUPS.map((item) => item.name);
-  const commonSelect = ['🚀 手动选择', '♻️ 自动选择', ...regionNames, 'DIRECT', 'REJECT'];
+  const regionsSorted = [...REGION_DEFS].sort((a, b) => a.priority - b.priority);
+  const regionNames = regionsSorted.map((item) => item.name);
+  const commonSelect = ['🚀 手动选择', '♻️ 自动选择', ...regionNames, OTHER_REGION_NAME, 'DIRECT', 'REJECT'];
 
   lines.push('', 'proxy-groups:');
 
-  // 手动选择
   lines.push(
     '  - name: 🚀 手动选择',
     '    type: select',
@@ -174,7 +322,6 @@ export function buildClashProfileYaml(options: {
     '      - REJECT',
   );
 
-  // 自动选择
   lines.push(
     '  - name: ♻️ 自动选择',
     '    type: url-test',
@@ -188,22 +335,41 @@ export function buildClashProfileYaml(options: {
     '      - DIRECT',
   );
 
-  // 地区
-  for (const region of REGION_GROUPS) {
+  // 地区组：filter = 本区；exclude-filter = 更高优先级区关键词 → 一节点一地区
+  for (const region of regionsSorted) {
+    const filter = buildFilterPattern(region.keywords);
+    const higher = keywordsOfPriorityLessThan(region.priority);
     lines.push(
       `  - name: ${region.name}`,
       '    type: select',
       '    include-all: true',
       '    include-all-proxies: true',
       '    include-all-providers: true',
-      `    filter: ${yamlScalar(region.filter)}`,
+      `    filter: ${yamlScalar(filter)}`,
+    );
+    if (higher.length) {
+      lines.push(`    exclude-filter: ${yamlScalar(buildFilterPattern(higher))}`);
+    }
+    lines.push(
       '    proxies:',
       '      - DIRECT',
       '      - REJECT',
     );
   }
 
-  // 按规则分类（组名与 rules 第三段一致；带 emoji）
+  // 其他地区：排除所有已知地区关键词
+  lines.push(
+    `  - name: ${OTHER_REGION_NAME}`,
+    '    type: select',
+    '    include-all: true',
+    '    include-all-proxies: true',
+    '    include-all-providers: true',
+    `    exclude-filter: ${yamlScalar(buildFilterPattern(allRegionKeywords()))}`,
+    '    proxies:',
+    '      - DIRECT',
+    '      - REJECT',
+  );
+
   for (const category of selected) {
     const groupName = groupLabel(category);
     lines.push(`  - name: ${yamlScalar(groupName)}`, '    type: select', '    proxies:');
