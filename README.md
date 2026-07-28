@@ -294,6 +294,7 @@ https://你的域名/admin/login
 - **漏网之鱼** 可选：手动、自动、全部地区组、其他地区、DIRECT/REJECT。
 - **漏网之鱼** 可选：手动、自动、全部地区组、其他地区、DIRECT/REJECT。
 - 自动选择测速与参考完整模板一致：`https://cp.cloudflare.com/generate_204`（interval 300 / tolerance 50）。
+- DNS 含 `proxy-server-nameserver`（直连解析节点域名），减轻 dmit 等美线测速 timeout 误报；`ipv6: false`。
 - 自动选择使用 `lazy` + `timeout: 5000` + `expected-status: 204`（Mihomo）；客户端批量测延迟仍可在设置里加大超时。
 
 ### 上游同步（自动）
