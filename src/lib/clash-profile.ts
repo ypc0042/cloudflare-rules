@@ -284,10 +284,8 @@ export function buildClashProfileYaml(options: {
     '    path: ./providers/airport.yaml',
     '    health-check:',
     '      enable: true',
-    '      # 测速地址：gstatic 在部分网络更稳；仍超时可在客户端改为 cp.cloudflare.com/generate_204',
-    '      url: https://www.gstatic.com/generate_204',
+    '      url: https://cp.cloudflare.com/generate_204',
     '      interval: 600',
-    '      timeout: 5000',
     '',
     '# ========== 规则提供者（引用本站规则集）==========',
     'rule-providers:',
@@ -331,20 +329,17 @@ export function buildClashProfileYaml(options: {
     '      - REJECT',
   );
 
-  // 自动选择：include-all 纳入全部节点；url-test 参数对齐常见可用模板
-  //（参考订阅同样用 generate_204；并配合下方「测速工具」分流，避免测速走错策略）
+  // 自动选择：与可用参考模板一致（cp.cloudflare.com/generate_204 + interval/tolerance）
+  // 不使用「测速工具」组；测延迟由客户端对节点直测该 URL
   lines.push(
     '  - name: ♻️ 自动选择',
     '    type: url-test',
     '    include-all: true',
     '    include-all-proxies: true',
     '    include-all-providers: true',
-    '    lazy: true',
-    '    url: https://www.gstatic.com/generate_204',
+    '    url: https://cp.cloudflare.com/generate_204',
     '    interval: 300',
     '    tolerance: 50',
-    '    timeout: 5000',
-    '    expected-status: 204',
     '    proxies:',
     '      - DIRECT',
   );
@@ -406,28 +401,7 @@ export function buildClashProfileYaml(options: {
     lines.push(`      - ${yamlScalar(item)}`);
   }
 
-  // 测速工具：客户端「测延迟」流量应走此组，避免被业务规则误伤；默认直连测速站点更稳
-  // 参考完整模板里「🚀 测速工具」+ GEOSITE category-speedtest 的做法
-  lines.push('  - name: 🚀 测速工具', '    type: select', '    proxies:');
-  lines.push('      - DIRECT');
-  for (const item of commonSelect) {
-    if (item === 'DIRECT' || item === 'REJECT') continue;
-    lines.push(`      - ${yamlScalar(item)}`);
-  }
-  lines.push('      - REJECT');
-
   lines.push('', 'rules:');
-  // 测速/连通性检测域名优先：直连或经「测速工具」组，减轻美国等节点「全超时」误报
-  lines.push(
-    '  - DOMAIN-SUFFIX,gstatic.com,🚀 测速工具',
-    '  - DOMAIN-SUFFIX,google.com,🚀 测速工具',
-    '  - DOMAIN-SUFFIX,googleapis.com,🚀 测速工具',
-    '  - DOMAIN-SUFFIX,cloudflare.com,🚀 测速工具',
-    '  - DOMAIN-KEYWORD,generate_204,🚀 测速工具',
-    '  - DOMAIN-KEYWORD,connectivitycheck,🚀 测速工具',
-    '  - DOMAIN-KEYWORD,captive,🚀 测速工具',
-    '  - GEOSITE,category-speedtest,🚀 测速工具',
-  );
   for (const category of selected) {
     const key = providerKey(category.slug);
     const groupName = ruleGroupRef(groupLabel(category));
